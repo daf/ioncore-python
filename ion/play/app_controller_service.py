@@ -13,8 +13,8 @@ log = ion.util.ionlog.getLogger(__name__)
 
 from twisted.internet import defer
 
-from ion.core.process.process import ProcessFactory
-from ion.core.process.service_process import ServiceProcess
+from ion.core.process.process import ProcessFactory, Process
+from ion.core.process.service_process import ServiceProcess, ServiceClient
 from ion.core.messaging import messaging
 from ion.core.messaging.receiver import Receiver
 
@@ -24,6 +24,7 @@ except:
     import simplejson as json
 
 STATIONS_PER_QUEUE = 2
+CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
 
 class AppControllerService(ServiceProcess):
     """
@@ -37,7 +38,8 @@ class AppControllerService(ServiceProcess):
     def __init__(self, *args, **kwargs):
         ServiceProcess.__init__(self, *args, **kwargs)
 
-        self.routing = {}
+        self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
+        self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
 
     @defer.inlineCallbacks
     def slc_init(self):
@@ -69,8 +71,7 @@ class AppControllerService(ServiceProcess):
 
         #yield self.all_data_recv.attach()
         #yield self.all_data_recv.initialize()
-        self.counter = 0
-
+        #self.counter = 0
 
     @defer.inlineCallbacks
     def _recv_announce(self, data, msg):
@@ -115,6 +116,8 @@ class AppControllerService(ServiceProcess):
 
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
+            self.request_sqlstream(queue_name)
+            
         self.routing[queue_name].append(station_name)
         
         log.info("Created binding %s to queue %s" % (binding_key, queue_name))
@@ -130,7 +133,36 @@ class AppControllerService(ServiceProcess):
                                    binding_key = binding_key,
                                    process=self)
         yield recv.initialize()   # creates queue but does not listen
-    
+
+    #@defer.inlineCallbacks
+    def request_sqlstream(self, queue_name, op_unit_id=None):
+        """
+        Requests a SQLStream operational unit to be created, or an additional SQLStream on an exiting operational unit.
+        @param queue_name   The queue the SQL Stream unit should consume from.
+        @param op_unit_id   The operational unit id that should be used to create a SQL Stream instance. If specified, will always create on that op unit. Otherwise, it will find available space on an existing VM or create a new VM.
+        """
+        if op_unit_id != None and not self.workers.has_key(op_unit_id):
+            log.error("request_sqlstream: op_unit (%s) requested but unknown" % op_unit_id)
+        
+        if op_unit_id:
+            pass
+        else:
+            # find an available op unit
+            for (worker,info) in self.workers.items():
+                availcores = info['cores'] - (info['sqlstreams'] * CORES_PER_SQLSTREAM)
+                if availcores >= CORES_PER_SQLSTREAM:
+                    log.debug("request_sqlstream - asking existing operational unit (%s) to spawn new SQLStream" % worker)
+                    # Request spawn new sqlstream instance on this worker
+                    # wait for rpc message to app controller that says sqlstream is up
+                    op_unit_id = worker
+                    break
+
+            if op_unit_id == None:
+                log.debug("request_sqlstream - requesting new operational unit")
+                # request spawn new VM
+                # wait for rpc message to app controller that says vm is up, then request sqlstream
+                pass
+         
     @defer.inlineCallbacks
     def _recv_data(self, data, msg):
         #log.info("<-- data packet" + msg.headers.__str__())
@@ -148,6 +180,51 @@ class AppControllerService(ServiceProcess):
                 return True
 
         return False
+
+    @defer.inlineCallbacks
+    def op_opunit_ready(self, content, headers, msg):
+        log.info("Op Unit reporting ready " + content.__str__())
+        if self.workers.has_key(content['id']):
+            log.error("Duplicate worker ID just reported in")
+
+        self.workers[content['id']] = {'cores':content['cores'],
+                                      'sqlstreams':0,
+                                      'reply-to':headers['reply-to']}
+
+        yield self.reply_ok(msg, {'value': 'ok'}, {})
+        yield self.rpc_send(headers['reply-to'], 'start_sqlstream', {'temp':0})
+        # processing continues when agent reports sqlstream is launched/configured/initialized
+
+    @defer.inlineCallbacks
+    def op_sqlstream_ready(self, content, headers, msg):
+        log.info("SQLStream reports as ready")
+        yield self.reply_ok(msg, {'value': 'ok'}, {})
+
+class AppAgent(Process):
+    """
+    Application Agent - lives on the opunit, communicates status with app controller, recieves
+    instructions.
+    """
+    def __init__(self, **kwargs):
+        #if not 'targetname' in kwargs:
+        #    kwargs['targetname'] = "app_controller"
+
+        self.workerid = kwargs.pop('workerid', 1)   # TODO: not sure where this comes from
+        self.queue_name = kwargs.pop('queue', "W1") # TODO: pull this from op unit config
+        
+        self.target = self.get_scoped_name('system', "app_controller")
+
+    @defer.inlineCallbacks
+    def opunit_ready(self):
+        yield self._check_init()
+        (content, headers, msg) = yield self.rpc_send(self.target, 'opunit_ready', {'id':1, 'cores':2})
+        #log.info('app controller told us: ' + str(content))
+        defer.returnValue(str(content))
+
+    @defer.inlineCallbacks
+    def op_start_sqlstream(self, content, headers, msg):
+        log.info("op_start_sqlstream : controller wants us to start one")
+        yield self.reply_ok(msg, {'value':'ok'}, {})
 
 class TopicWorkerReceiver(Receiver):
     """
