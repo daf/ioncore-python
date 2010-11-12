@@ -40,7 +40,7 @@ class AppControllerService(ServiceProcess):
 
         self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
-        self.unboundqueues = {} # mapping of queues waiting to be assigned to sqlstreams (op unit is starting up)
+        self.unboundqueues = [] # list of queues waiting to be assigned to sqlstreams (op unit is starting up)
 
     @defer.inlineCallbacks
     def slc_init(self):
@@ -117,7 +117,7 @@ class AppControllerService(ServiceProcess):
 
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
-            self.request_sqlstream(queue_name)
+            yield self.request_sqlstream(queue_name)
             
         self.routing[queue_name].append(station_name)
         
@@ -135,7 +135,7 @@ class AppControllerService(ServiceProcess):
                                    process=self)
         yield recv.initialize()   # creates queue but does not listen
 
-    #@defer.inlineCallbacks
+    @defer.inlineCallbacks
     def request_sqlstream(self, queue_name, op_unit_id=None):
         """
         Requests a SQLStream operational unit to be created, or an additional SQLStream on an exiting operational unit.
@@ -146,11 +146,9 @@ class AppControllerService(ServiceProcess):
             log.error("request_sqlstream: op_unit (%s) requested but unknown" % op_unit_id)
         
         # TODO: assign op_unit_id to it as well
-        self.unboundqueues[queue_name] = queue_name
+        self.unboundqueues.insert(0, queue_name)
 
-        if op_unit_id:
-            pass
-        else:
+        if op_unit_id == None:
             # find an available op unit
             for (worker,info) in self.workers.items():
                 availcores = info['cores'] - (len(info['sqlstreams']) * CORES_PER_SQLSTREAM)
@@ -161,11 +159,13 @@ class AppControllerService(ServiceProcess):
                     op_unit_id = worker
                     break
 
-            if op_unit_id == None:
-                log.info("request_sqlstream - requesting new operational unit")
-                # request spawn new VM
-                # wait for rpc message to app controller that says vm is up, then request sqlstream
-                pass
+        if op_unit_id == None:
+            log.info("request_sqlstream - requesting new operational unit")
+            # request spawn new VM
+            # wait for rpc message to app controller that says vm is up, then request sqlstream
+            defer.returnValue(None)
+        else:
+            yield self.rpc_send(worker, 'start_sqlstream', {'queue_name':queue_name})
          
     @defer.inlineCallbacks
     def _recv_data(self, data, msg):
@@ -197,14 +197,18 @@ class AppControllerService(ServiceProcess):
         yield self.reply_ok(msg, {'value': 'ok'}, {})
 
         # TODO: pump sql stream config over here
-        try:
-            (queue_name,wid) = self.unboundqueues.popitem()
-        except:
-            log.error("Op Unit ready but no queue waiting to be consumed")
-            queue_name = "DEADLETTER"
+        queue_name = None
+        if len(self.unboundqueues):
+            queue_name = self.unboundqueues.pop()
 
-        yield self.rpc_send(content['id'], 'start_sqlstream', {'queue_name':queue_name})
-        # processing continues when agent reports sqlstream is launched/configured/initialized
+        if queue_name != None:
+            yield self.rpc_send(content['id'], 'start_sqlstream', {'queue_name':queue_name})
+            # processing continues when agent reports sqlstream is launched/configured/initialized
+        else:
+            log.info("Op Unit reported ready but no queue for it to work with")
+
+        # if we did not find a queue_name from the unboundqueues, it's ok, it'll just be
+        # in the list used by request_sqlstream
 
     @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
