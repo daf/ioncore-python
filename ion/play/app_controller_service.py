@@ -188,11 +188,10 @@ class AppControllerService(ServiceProcess):
             log.error("Duplicate worker ID just reported in")
 
         self.workers[content['id']] = {'cores':content['cores'],
-                                       'sqlstreams':0,
-                                       'reply-to':headers['reply-to']}
+                                       'sqlstreams':0}
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
-        yield self.rpc_send(headers['reply-to'], 'start_sqlstream', {'temp':0})
+        yield self.rpc_send(content['id'], 'start_sqlstream', {'temp':0})
         # processing continues when agent reports sqlstream is launched/configured/initialized
 
     @defer.inlineCallbacks
@@ -208,13 +207,13 @@ class AppAgent(Process):
 
     #@defer.inlineCallbacks
     def plc_init(self):
-        self.workerid = self.spawn_args.pop('workerid', 1)   # TODO: not sure where this comes from
+        #self.workerid = self.spawn_args.pop('workerid', 1)   # TODO: not sure where this comes from
         self.queue_name = self.spawn_args.pop('queue', "W1") # TODO: pull this from op unit config
         self.target = self.get_scoped_name('system', "app_controller")
 
     @defer.inlineCallbacks
     def opunit_ready(self):
-        (content, headers, msg) = yield self.rpc_send(self.target, 'opunit_ready', {'id':1, 'cores':2})
+        (content, headers, msg) = yield self.rpc_send(self.target, 'opunit_ready', {'id':self.id.full, 'cores':2})
         #log.info('app controller told us: ' + str(content))
         defer.returnValue(str(content))
 
