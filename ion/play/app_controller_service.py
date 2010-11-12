@@ -187,6 +187,12 @@ class AppControllerService(ServiceProcess):
 
     @defer.inlineCallbacks
     def op_opunit_ready(self, content, headers, msg):
+        """
+        An op unit has started and reported in. It has no running SQLStream instances at
+        this time.
+        When we receive this message, if we have a queue waiting to be consumed,
+        we tell it to start a SQLStream that will read from that queue.
+        """
         log.info("Op Unit reporting ready " + content.__str__())
         if self.workers.has_key(content['id']):
             log.error("Duplicate worker ID just reported in")
@@ -212,6 +218,10 @@ class AppControllerService(ServiceProcess):
 
     @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
+        """
+        A worker has indicated a SQLStream is ready.
+        When we receive this message, we tell the SQLStream to turn its pumps on.
+        """
         log.info("SQLStream reports as ready: %s" % str(content))
         yield self.reply_ok(msg, {'value': 'ok'}, {})
 
@@ -230,21 +240,25 @@ class AppAgent(Process):
 
     #@defer.inlineCallbacks
     def plc_init(self):
-        #self.workerid = self.spawn_args.pop('workerid', 1)   # TODO: not sure where this comes from
-        #self.queue_name = self.spawn_args.pop('queue', "W1") # TODO: pull this from op unit config
         self.target = self.get_scoped_name('system', "app_controller")
         self.sqlstreams = {}
 
     @defer.inlineCallbacks
     def opunit_ready(self):
+        """
+        Declares to the app controller that this op unit is ready. This indicates a freshly
+        started op unit with no running SQLStream instances.
+        """
         (content, headers, msg) = yield self.rpc_send('opunit_ready', {'id':self.id.full, 'cores':2})
-        #log.info('app controller told us: ' + str(content))
         defer.returnValue(str(content))
 
     @defer.inlineCallbacks
     def op_start_sqlstream(self, content, headers, msg):
-
-        # TODO: STATE CHANGE
+        """
+        Begins the process of starting and configuring a SQLStream instance on this op unit.
+        The app controller calls here when it determines the op unit should spawn a new
+        processing SQLStream.
+        """
         ssid = len(self.sqlstreams.keys()) + 1
         self.sqlstreams[ssid] = {'id':ssid,
                                  'state':'starting',
@@ -258,6 +272,9 @@ class AppAgent(Process):
 
     @defer.inlineCallbacks
     def _pretend_sqlstream_started(self, *args, **kwargs):
+        """
+        @TODO: remove, this is to simulate a SQLStream instance starting
+        """
         ssid = kwargs.get('sqlstreamid')
         log.info("called later : sqlstream ready announce %s" % ssid)
 
@@ -267,6 +284,10 @@ class AppAgent(Process):
 
     @defer.inlineCallbacks
     def op_ctl_sqlstream(self, content, headers, msg):
+        """
+        Instructs a SQLStream to perform an operation like start or stop its pumps.
+        The app controller calls here.
+        """
         log.info("ctl_sqlstream received " + content['action'])
 
         if content['action'] == 'pumps_on':
@@ -278,11 +299,19 @@ class AppAgent(Process):
 
     #@defer.inlineCallbacks
     def pumps_on(self, sqlstreamid):
+        """
+        Instructs the given SQLStream worker to turn its pumps on.
+        It will begin or resume reading from its queue.
+        """
         log.info("pumps_on: %d" % sqlstreamid)
         self.sqlstreams[sqlstreamid]['state'] = 'running'
 
     #@defer.inlineCallbacks
     def pumps_off(self, sqlstreamid):
+        """
+        Instructs the given SQLStream worker to turn its pumps off.
+        It will no longer read from its queue.
+        """
         log.info("pumps_off: %d" % sqlstreamid)
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
@@ -292,7 +321,6 @@ class AppAgent(Process):
         Wrapper to make rpc calls a bit easier. Builds standard info into content message like
         our id.
         """
-
         content.update({'id':self.id.full})
         content.update(kwargs)
 
