@@ -188,8 +188,8 @@ class AppControllerService(ServiceProcess):
             log.error("Duplicate worker ID just reported in")
 
         self.workers[content['id']] = {'cores':content['cores'],
-                                      'sqlstreams':0,
-                                      'reply-to':headers['reply-to']}
+                                       'sqlstreams':0,
+                                       'reply-to':headers['reply-to']}
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
         yield self.rpc_send(headers['reply-to'], 'start_sqlstream', {'temp':0})
@@ -205,18 +205,15 @@ class AppAgent(Process):
     Application Agent - lives on the opunit, communicates status with app controller, recieves
     instructions.
     """
-    def __init__(self, **kwargs):
-        #if not 'targetname' in kwargs:
-        #    kwargs['targetname'] = "app_controller"
 
-        self.workerid = kwargs.pop('workerid', 1)   # TODO: not sure where this comes from
-        self.queue_name = kwargs.pop('queue', "W1") # TODO: pull this from op unit config
-        
+    #@defer.inlineCallbacks
+    def plc_init(self):
+        self.workerid = self.spawn_args.pop('workerid', 1)   # TODO: not sure where this comes from
+        self.queue_name = self.spawn_args.pop('queue', "W1") # TODO: pull this from op unit config
         self.target = self.get_scoped_name('system', "app_controller")
 
     @defer.inlineCallbacks
     def opunit_ready(self):
-        yield self._check_init()
         (content, headers, msg) = yield self.rpc_send(self.target, 'opunit_ready', {'id':1, 'cores':2})
         #log.info('app controller told us: ' + str(content))
         defer.returnValue(str(content))
