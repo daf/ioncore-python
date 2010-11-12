@@ -11,7 +11,7 @@ from ion.core import ioninit
 import ion.util.ionlog
 log = ion.util.ionlog.getLogger(__name__)
 
-from twisted.internet import defer
+from twisted.internet import defer, reactor
 
 from ion.core.process.process import ProcessFactory, Process
 from ion.core.process.service_process import ServiceProcess, ServiceClient
@@ -40,6 +40,7 @@ class AppControllerService(ServiceProcess):
 
         self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
+        self.unboundqueues = {} # mapping of queues waiting to be assigned to sqlstreams (op unit is starting up)
 
     @defer.inlineCallbacks
     def slc_init(self):
@@ -112,7 +113,7 @@ class AppControllerService(ServiceProcess):
 
         binding_key = 'ta.%s' % station_name
 
-        yield self.create_queue(queue_name, binding_key)
+        yield self._create_queue(queue_name, binding_key)
 
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
@@ -123,7 +124,7 @@ class AppControllerService(ServiceProcess):
         log.info("Created binding %s to queue %s" % (binding_key, queue_name))
 
     @defer.inlineCallbacks
-    def create_queue(self, queue_name, binding_key):
+    def _create_queue(self, queue_name, binding_key):
         """
         Creates a queue and/or binding to a queue (just the binding if the queue exists).
         TODO: replace this with proper method of doing so.
@@ -144,21 +145,24 @@ class AppControllerService(ServiceProcess):
         if op_unit_id != None and not self.workers.has_key(op_unit_id):
             log.error("request_sqlstream: op_unit (%s) requested but unknown" % op_unit_id)
         
+        # TODO: assign op_unit_id to it as well
+        self.unboundqueues[queue_name] = queue_name
+
         if op_unit_id:
             pass
         else:
             # find an available op unit
             for (worker,info) in self.workers.items():
-                availcores = info['cores'] - (info['sqlstreams'] * CORES_PER_SQLSTREAM)
+                availcores = info['cores'] - (len(info['sqlstreams']) * CORES_PER_SQLSTREAM)
                 if availcores >= CORES_PER_SQLSTREAM:
-                    log.debug("request_sqlstream - asking existing operational unit (%s) to spawn new SQLStream" % worker)
+                    log.info("request_sqlstream - asking existing operational unit (%s) to spawn new SQLStream" % worker)
                     # Request spawn new sqlstream instance on this worker
                     # wait for rpc message to app controller that says sqlstream is up
                     op_unit_id = worker
                     break
 
             if op_unit_id == None:
-                log.debug("request_sqlstream - requesting new operational unit")
+                log.info("request_sqlstream - requesting new operational unit")
                 # request spawn new VM
                 # wait for rpc message to app controller that says vm is up, then request sqlstream
                 pass
@@ -188,16 +192,31 @@ class AppControllerService(ServiceProcess):
             log.error("Duplicate worker ID just reported in")
 
         self.workers[content['id']] = {'cores':content['cores'],
-                                       'sqlstreams':0}
+                                       'sqlstreams':[]}
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
-        yield self.rpc_send(content['id'], 'start_sqlstream', {'temp':0})
+
+        # TODO: pump sql stream config over here
+        try:
+            (queue_name,wid) = self.unboundqueues.popitem()
+        except:
+            log.error("Op Unit ready but no queue waiting to be consumed")
+            queue_name = "DEADLETTER"
+
+        yield self.rpc_send(content['id'], 'start_sqlstream', {'queue_name':queue_name})
         # processing continues when agent reports sqlstream is launched/configured/initialized
 
     @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
-        log.info("SQLStream reports as ready")
+        log.info("SQLStream reports as ready: %s" % str(content))
         yield self.reply_ok(msg, {'value': 'ok'}, {})
+
+        # save knowledge of this sqlstream on this worker
+        self.workers[content['id']]['sqlstreams'].append({'sqlstreamid':content['sqlstreamid'],
+                                                          'queue_name':content['queue_name']})
+
+        # tell it to turn the pumps on
+        yield self.rpc_send(content['id'], 'ctl_sqlstream', {'sqlstreamid':content['sqlstreamid'],'action':'pumps_on'})
 
 class AppAgent(Process):
     """
@@ -208,19 +227,73 @@ class AppAgent(Process):
     #@defer.inlineCallbacks
     def plc_init(self):
         #self.workerid = self.spawn_args.pop('workerid', 1)   # TODO: not sure where this comes from
-        self.queue_name = self.spawn_args.pop('queue', "W1") # TODO: pull this from op unit config
+        #self.queue_name = self.spawn_args.pop('queue', "W1") # TODO: pull this from op unit config
         self.target = self.get_scoped_name('system', "app_controller")
+        self.sqlstreams = {}
 
     @defer.inlineCallbacks
     def opunit_ready(self):
-        (content, headers, msg) = yield self.rpc_send(self.target, 'opunit_ready', {'id':self.id.full, 'cores':2})
+        (content, headers, msg) = yield self.rpc_send('opunit_ready', {'id':self.id.full, 'cores':2})
         #log.info('app controller told us: ' + str(content))
         defer.returnValue(str(content))
 
     @defer.inlineCallbacks
     def op_start_sqlstream(self, content, headers, msg):
-        log.info("op_start_sqlstream : controller wants us to start one")
+
+        # TODO: STATE CHANGE
+        ssid = len(self.sqlstreams.keys()) + 1
+        self.sqlstreams[ssid] = {'id':ssid,
+                                 'state':'starting',
+                                 'queue_name':content['queue_name']}
+
+        log.info("op_start_sqlstream : %s" % str(self.sqlstreams[ssid]))
+
+        reactor.callLater(5, self._pretend_sqlstream_started, None, **{'sqlstreamid':ssid})
+
         yield self.reply_ok(msg, {'value':'ok'}, {})
+
+    @defer.inlineCallbacks
+    def _pretend_sqlstream_started(self, *args, **kwargs):
+        ssid = kwargs.get('sqlstreamid')
+        log.info("called later : sqlstream ready announce %s" % ssid)
+
+        self.sqlstreams[ssid]['state'] = 'stopped'
+        yield self.rpc_send('sqlstream_ready', {'sqlstreamid':ssid,
+                                                'queue_name':self.sqlstreams[ssid]['queue_name']})
+
+    @defer.inlineCallbacks
+    def op_ctl_sqlstream(self, content, headers, msg):
+        log.info("ctl_sqlstream received " + content['action'])
+
+        if content['action'] == 'pumps_on':
+            self.pumps_on(content['sqlstreamid'])
+        elif content['action'] == 'pumps_off':
+            self.pumps_off(content['sqlstreamid'])
+
+        yield self.reply_ok(msg, {'value':'ok'}, {})
+
+    #@defer.inlineCallbacks
+    def pumps_on(self, sqlstreamid):
+        log.info("pumps_on: %d" % sqlstreamid)
+        self.sqlstreams[sqlstreamid]['state'] = 'running'
+
+    #@defer.inlineCallbacks
+    def pumps_off(self, sqlstreamid):
+        log.info("pumps_off: %d" % sqlstreamid)
+        self.sqlstreams[sqlstreamid]['state'] = 'stopped'
+
+    @defer.inlineCallbacks
+    def rpc_send(self, operation, content, headers=None, **kwargs):
+        """
+        Wrapper to make rpc calls a bit easier. Builds standard info into content message like
+        our id.
+        """
+
+        content.update({'id':self.id.full})
+        content.update(kwargs)
+
+        ret = yield Process.rpc_send(self, self.target, operation, content, headers, **kwargs)
+        defer.returnValue(ret)
 
 class TopicWorkerReceiver(Receiver):
     """
@@ -252,7 +325,7 @@ class TopicWorkerReceiver(Receiver):
         #TODO: auto_delete gets clobbered in Consumer.name by exchange space dict config - rewrite - maybe not possible if exchange is set to auto_delete always
         name_config.update({'name_type':'worker', 'binding_key':self.binding_key, 'routing_key':self.binding_key, 'auto_delete':False})
 
-        log.info("CONF IN " + name_config.__str__())
+        #log.info("CONF IN " + name_config.__str__())
 
         yield self._init_receiver(name_config, store_config=True)
 
