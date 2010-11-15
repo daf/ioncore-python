@@ -242,6 +242,13 @@ class AppControllerService(ServiceProcess):
         # tell it to turn the pumps on
         yield self.rpc_send(content['id'], 'ctl_sqlstream', {'sqlstreamid':content['sqlstreamid'],'action':'pumps_on'})
 
+#
+#
+# ########################################################
+#
+#
+
+
 class AppAgent(Process):
     """
     Application Agent - lives on the opunit, communicates status with app controller, recieves
@@ -336,6 +343,12 @@ class AppAgent(Process):
 
         ret = yield Process.rpc_send(self, self.target, operation, content, headers, **kwargs)
         defer.returnValue(ret)
+
+#
+#
+# ########################################################
+#
+#
 
 class TopicWorkerReceiver(Receiver):
     """
