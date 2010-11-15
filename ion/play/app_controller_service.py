@@ -165,7 +165,7 @@ class AppControllerService(ServiceProcess):
             # wait for rpc message to app controller that says vm is up, then request sqlstream
             defer.returnValue(None)
         else:
-            yield self.rpc_send(worker, 'start_sqlstream', {'queue_name':queue_name})
+            yield self._start_sqlstream(worker, queue_name)
          
     @defer.inlineCallbacks
     def _recv_data(self, data, msg):
@@ -208,13 +208,20 @@ class AppControllerService(ServiceProcess):
             queue_name = self.unboundqueues.pop()
 
         if queue_name != None:
-            yield self.rpc_send(content['id'], 'start_sqlstream', {'queue_name':queue_name})
+            yield self._start_sqlstream(content['id'], queue_name)
             # processing continues when agent reports sqlstream is launched/configured/initialized
         else:
             log.info("Op Unit reported ready but no queue for it to work with")
 
         # if we did not find a queue_name from the unboundqueues, it's ok, it'll just be
         # in the list used by request_sqlstream
+
+    @defer.inlineCallbacks
+    def _start_sqlstream(self, id, queue_name):
+        """
+        Tells an op unit with the given id to start a SQLStream instance.
+        """
+        yield self.rpc_send(id, 'start_sqlstream', {'queue_name':queue_name})
 
     @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
