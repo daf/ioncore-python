@@ -25,6 +25,8 @@ except:
 
 STATIONS_PER_QUEUE = 2
 CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
+EXCHANGE_NAME = "magnet.topic"
+DETECTION_TOPIC = "anf.detections"
 
 class AppControllerService(ServiceProcess):
     """
@@ -224,7 +226,27 @@ class AppControllerService(ServiceProcess):
         """
         Tells an op unit with the given id to start a SQLStream instance.
         """
-        yield self.rpc_send(id, 'start_sqlstream', {'queue_name':queue_name})
+
+        params = {'queue_name':queue_name,
+                  'sql_foreign_stream_defs':"""
+                                  CREATE FOREIGN STREAM "RawSignalMessages" (
+                                    header varchar(256),
+                                    body   varbinary(2048))
+                                  SERVER "UcsdServer"
+                                  OPTIONS (EXCHANGE '%s', QUEUE '%s', TYPE 'READER');
+
+                                  CREATE FOREIGN STREAM "DetectionMessages" (
+                                    groupID int,
+                                    sourcename varchar(16),
+                                    "detectionIndex" int,
+                                    t bigint,
+                                    tag varchar(3)
+                                  )
+                                  SERVER "UcsdServer"
+                                  OPTIONS(EXCHANGE '%s', TOPIC '%s', TYPE 'WRITER');
+                                  """ % (EXCHANGE_NAME, queue_name, EXCHANGE_NAME, DETECTION_TOPIC)
+                 }
+        yield self.rpc_send(id, 'start_sqlstream', params)
 
     @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
@@ -279,9 +301,10 @@ class AppAgent(Process):
         ssid = len(self.sqlstreams.keys()) + 1
         self.sqlstreams[ssid] = {'id':ssid,
                                  'state':'starting',
-                                 'queue_name':content['queue_name']}
+                                 'queue_name':content['queue_name'],
+                                 'sql_foreign_stream_defs':content['sql_foreign_stream_defs']}
 
-        log.info("op_start_sqlstream : %s (%s)" % (str(self.sqlstreams[ssid]), self.sqlstreams[ssid]['queue_name']))
+        log.info("op_start_sqlstream : %s" % str(self.sqlstreams[ssid]))
 
         reactor.callLater(5, self._pretend_sqlstream_started, None, **{'sqlstreamid':ssid})
 
