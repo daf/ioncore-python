@@ -11,7 +11,7 @@ from ion.core import ioninit
 import ion.util.ionlog
 log = ion.util.ionlog.getLogger(__name__)
 
-from twisted.internet import defer, reactor
+from twisted.internet import defer, reactor, protocol
 
 from ion.core.process.process import ProcessFactory, Process
 from ion.core.process.service_process import ServiceProcess, ServiceClient
@@ -281,7 +281,7 @@ class AppAgent(Process):
                                  'state':'starting',
                                  'queue_name':content['queue_name']}
 
-        log.info("op_start_sqlstream : %s" % str(self.sqlstreams[ssid]))
+        log.info("op_start_sqlstream : %s (%s)" % (str(self.sqlstreams[ssid]), self.sqlstreams[ssid]['queue_name']))
 
         reactor.callLater(5, self._pretend_sqlstream_started, None, **{'sqlstreamid':ssid})
 
@@ -323,6 +323,13 @@ class AppAgent(Process):
         log.info("pumps_on: %d" % sqlstreamid)
         self.sqlstreams[sqlstreamid]['state'] = 'running'
 
+        sspp = SSProcessProtocol()
+        #args = ['/Users/asadeveloper/tmp/seismic/drain_queue.py', '--queue', self.sqlstreams[sqlstreamid]['queue_name']] 
+        processname = '/Users/asadeveloper/tmp/seismic/drain_queue.py'
+        theargs = [processname, '--queue', self.sqlstreams[sqlstreamid]['queue_name']] 
+        #args = ['/Users/asadeveloper/tmp/seismic/trad.py']
+        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None, usePTY=True)
+
     #@defer.inlineCallbacks
     def pumps_off(self, sqlstreamid):
         """
@@ -331,6 +338,8 @@ class AppAgent(Process):
         """
         log.info("pumps_off: %d" % sqlstreamid)
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
+        if self.sqlstreams[sqlstreamid].has_key('proc'):
+            self.sqlstreams[sqlstreamid]['proc'].transport.signalProcess('KILL')
 
     @defer.inlineCallbacks
     def rpc_send(self, operation, content, headers=None, **kwargs):
@@ -344,6 +353,16 @@ class AppAgent(Process):
         ret = yield Process.rpc_send(self, self.target, operation, content, headers, **kwargs)
         defer.returnValue(ret)
 
+    def __del__(self):
+        """
+        Destructor - kills any running consumers cleanly.
+        TODO: this is temporary, only works with drain script. Replace with real comms to
+        SQLStream.
+        """
+        for (sqlstreamid, info) in self.sqlstreams:
+            if info.has_key('state') and info['state'] == 'running':
+                if info.has_key['proc']:
+                    info['proc'].transport.signalProcess('KILL')
 #
 #
 # ########################################################
@@ -383,6 +402,26 @@ class TopicWorkerReceiver(Receiver):
         #log.info("CONF IN " + name_config.__str__())
 
         yield self._init_receiver(name_config, store_config=True)
+
+#
+#
+# ########################################################
+#
+#
+
+class SSProcessProtocol(protocol.ProcessProtocol):
+    """
+    TODO: Class for connecting to SQLStream through Twisted
+    """
+    def connectionMade(self):
+        log.info("CONNECT")
+
+    def outReceived(self, data):
+        log.debug(data)
+
+    def processEnded(self, reason):
+        log.info("PROC ENDED: %s" % reason.value.exitCode)
+
 
 # Spawn of the process using the module name
 factory = ProcessFactory(AppControllerService)
