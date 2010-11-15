@@ -157,6 +157,9 @@ class AppControllerService(ServiceProcess):
                     # Request spawn new sqlstream instance on this worker
                     # wait for rpc message to app controller that says sqlstream is up
                     op_unit_id = worker
+
+                    # record the fact we are using this worker now
+                    info['sqlstreams'].append({'sqlstreamid':-1}) # 'sqlstreamid' will be updated when sqlstream actually comes up
                     break
 
         if op_unit_id == None:
