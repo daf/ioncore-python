@@ -6,6 +6,9 @@
 @brief Application Controller for load balancing
 """
 
+import os
+import string
+
 from ion.core import ioninit
 
 import ion.util.ionlog
@@ -43,6 +46,7 @@ class AppControllerService(ServiceProcess):
         self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
         self.unboundqueues = [] # list of queues waiting to be assigned to sqlstreams (op unit is starting up)
+        self.sqldefs = None     # cached copy of SQLStream SQL definition templates from disk
 
     @defer.inlineCallbacks
     def slc_init(self):
@@ -228,25 +232,45 @@ class AppControllerService(ServiceProcess):
         """
 
         params = {'queue_name':queue_name,
-                  'sql_foreign_stream_defs':"""
-                                  CREATE FOREIGN STREAM "RawSignalMessages" (
-                                    header varchar(256),
-                                    body   varbinary(2048))
-                                  SERVER "UcsdServer"
-                                  OPTIONS (EXCHANGE '%s', QUEUE '%s', TYPE 'READER');
+                  'sql_defs':self._get_sql_def(inp_queue=queue_name, 
+                                               inp_exchange=EXCHANGE_NAME, 
+                                               det_topic=DETECTION_TOPIC, 
+                                               det_exchange=EXCHANGE_NAME) }
 
-                                  CREATE FOREIGN STREAM "DetectionMessages" (
-                                    groupID int,
-                                    sourcename varchar(16),
-                                    "detectionIndex" int,
-                                    t bigint,
-                                    tag varchar(3)
-                                  )
-                                  SERVER "UcsdServer"
-                                  OPTIONS(EXCHANGE '%s', TOPIC '%s', TYPE 'WRITER');
-                                  """ % (EXCHANGE_NAME, queue_name, EXCHANGE_NAME, DETECTION_TOPIC)
-                 }
         yield self.rpc_send(id, 'start_sqlstream', params)
+
+    def _get_sql_def(self, **kwargs):
+        """
+        Gets SQLStream detection application SQL definitions, either from
+        disk or in memory. SQL files stored on disk are loaded once and stored
+        in memory after they have been translated through string.Template.
+
+        You may override the SQL defs by sending an RPC message ("set_sql_defs") to
+        the Application Controller. These defs will take the place of the current
+        in memory defs. They are expected to be templates, in which certain vars will be
+        updated. See op_set_sql_defs for more information.
+        """
+        #inp_queue, inp_exchange, out_queue, out_exchange, nostore=False):
+        nostore = kwargs.pop('nostore', False)
+
+        if self.sqldefs != None:
+            fulltemplate = self.sqldefs
+        else:
+            fulltemplatelist = []
+            for filename in ["catalog.sqlt", "detections.sqlt", "validate.sqlt"]:
+                f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", "catalog.sqlt"), "r")
+                fulltemplatelist.extend(f.readlines())
+                f.close()
+
+            fulltemplate = "\n".join(fulltemplatelist)
+
+            if not nostore:
+                self.sqldefs = fulltemplate
+
+        # template replace fulltemplates with kwargs
+        t = string.Template(fulltemplate)
+        defs = t.substitute(kwargs)
+        return defs
 
     @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
@@ -302,9 +326,10 @@ class AppAgent(Process):
         self.sqlstreams[ssid] = {'id':ssid,
                                  'state':'starting',
                                  'queue_name':content['queue_name'],
-                                 'sql_foreign_stream_defs':content['sql_foreign_stream_defs']}
+                                 'sql_defs':content['sql_defs']}
 
-        log.info("op_start_sqlstream : %s" % str(self.sqlstreams[ssid]))
+        log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
+        print str(self.sqlstreams[ssid])
 
         reactor.callLater(5, self._pretend_sqlstream_started, None, **{'sqlstreamid':ssid})
 
