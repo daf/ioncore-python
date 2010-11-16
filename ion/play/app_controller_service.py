@@ -273,6 +273,35 @@ class AppControllerService(ServiceProcess):
         return defs
 
     @defer.inlineCallbacks
+    def op_set_sql_defs(self, content, headers, msg):
+        """
+        Updates the current cached SQL defs for the SQLStream detection application.
+        This overrides what is found on the disk.
+
+        Note it does not update the SQL files on disk, so if the AppControllerService is
+        restarted, it will need to be updated with the current defs again.
+
+        This method expects that the only key in content, also named content, is a full 
+        SQL definition (the concatenation of "catalog.sqlt", "detections.sqlt", and 
+        "validate.sqlt") with Python string.Template vars as substitution points for the
+        following variables:
+
+        * inp_queue     - The input queue name to read messages from.
+        * inp_exchange  - The exchange where the input queue resides.
+        * det_topic     - The topic string that should be used for detections.
+        * det_exchange  - The exchange where detections should be published.
+
+        If these variables are not present, no error is thrown - it will use whatever you
+        gave it. So your updated SQL definitions may hardcode the variables above.
+
+        Variable substitution is done by calling self._get_sql_def and passing appropriate
+        replacement variables via keyword arguments to the method. self._start_sqlstream
+        is an example user of that replacement method.
+        """
+        self.sqldefs = content['content']
+        yield self.reply_ok(msg, {'value':'ok'}, {})
+
+    @defer.inlineCallbacks
     def op_sqlstream_ready(self, content, headers, msg):
         """
         A worker has indicated a SQLStream is ready.
