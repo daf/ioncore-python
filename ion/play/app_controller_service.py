@@ -369,13 +369,19 @@ class AppAgent(Process):
         It will begin or resume reading from its queue.
         """
         log.info("pumps_on: %d" % sqlstreamid)
+
+        sql_cmd = """
+                  ALTER PUMP "SignalsPump" START;
+                  ALTER PUMP "DetectionsPump" START;
+                  ALTER PUMP "DetectionMessagesPump" START;
+                  """
+        # TODO: execute sqllineClient and pipe the above into it
         self.sqlstreams[sqlstreamid]['state'] = 'running'
 
+        # TODO: everything below here is fake and will be removed
         sspp = SSProcessProtocol()
-        #args = ['/Users/asadeveloper/tmp/seismic/drain_queue.py', '--queue', self.sqlstreams[sqlstreamid]['queue_name']] 
         processname = '/Users/asadeveloper/tmp/seismic/drain_queue.py'
         theargs = [processname, '--queue', self.sqlstreams[sqlstreamid]['queue_name']] 
-        #args = ['/Users/asadeveloper/tmp/seismic/trad.py']
         self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None, usePTY=True)
 
     #@defer.inlineCallbacks
@@ -385,7 +391,16 @@ class AppAgent(Process):
         It will no longer read from its queue.
         """
         log.info("pumps_off: %d" % sqlstreamid)
+
+        sql_cmd = """
+                  ALTER PUMP "SignalsPump" STOP;
+                  ALTER PUMP "DetectionsPump" STOP;
+                  ALTER PUMP "DetectionMessagesPump" STOP;
+                  """
+        # TODO: execute sqllineClient and pipe the above into it
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
+
+        # TODO: everyhting below here is fake and will be removed
         if self.sqlstreams[sqlstreamid].has_key('proc'):
             self.sqlstreams[sqlstreamid]['proc'].transport.signalProcess('KILL')
 
