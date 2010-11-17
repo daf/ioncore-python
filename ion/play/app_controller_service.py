@@ -162,7 +162,9 @@ class AppControllerService(ServiceProcess):
                     op_unit_id = worker
 
                     # record the fact we are using this worker now
-                    info['sqlstreams'].append({'sqlstreamid':-1}) # 'sqlstreamid' will be updated when sqlstream actually comes up
+                    # TODO : needs to be an integer to indicate number of starting up, or a
+                    # unique key per each starter
+                    info['sqlstreams']['spawning'] = True
                     break
 
         if op_unit_id == None:
@@ -210,7 +212,7 @@ class AppControllerService(ServiceProcess):
             log.error("Duplicate worker ID just reported in")
 
         self.workers[content['id']] = {'cores':content['cores'],
-                                       'sqlstreams':[]}
+                                       'sqlstreams':{}}
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
 
@@ -313,11 +315,20 @@ class AppControllerService(ServiceProcess):
         yield self.reply_ok(msg, {'value': 'ok'}, {})
 
         # save knowledge of this sqlstream on this worker
-        self.workers[content['id']]['sqlstreams'].append({'sqlstreamid':content['sqlstreamid'],
-                                                          'queue_name':content['queue_name']})
+        self.workers[content['id']]['sqlstreams'][content['sqlstreamid']] = {'queue_name':content['queue_name'], 'status':'ready'}
 
         # tell it to turn the pumps on
         yield self.rpc_send(content['id'], 'ctl_sqlstream', {'sqlstreamid':content['sqlstreamid'],'action':'pumps_on'})
+
+    @defer.inlineCallbacks
+    def op_sqlstream_status(self, content, headers, msg):
+        """
+        Status message recieved from agent to indicate what's happening with a SQLStream instance.
+        """
+        log.info("SQLStream status report: %s for SS# %d on %s" % (content['status'], content['sqlstreamid'], content['id']))
+
+        self.workers[content['id']]['sqlstreams'][content['sqlstreamid']]['status'] = content['status']
+        yield self.reply_ok(msg, {'value': 'ok'})
 
 #
 #
@@ -407,13 +418,26 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
         # TODO: execute sqllineClient and pipe the above into it
-        self.sqlstreams[sqlstreamid]['state'] = 'running'
 
         # TODO: everything below here is fake and will be removed
-        sspp = SSProcessProtocol()
-        processname = '/Users/asadeveloper/tmp/seismic/drain_queue.py'
-        theargs = [processname, '--queue', self.sqlstreams[sqlstreamid]['queue_name']] 
-        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None, usePTY=True)
+        sspp = SSProcessProtocol(self, self._pumps_on_callback, sql_cmd, sqlstreamid=sqlstreamid)
+        processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
+        theargs = [processname]
+
+        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+
+    @defer.inlineCallbacks
+    def _pumps_on_callback(self, exitcode, outlines, errlines, **kwargs):
+        log.debug("CALLBACK for pumps on: %d, %s" % (exitcode,"\n".join(outlines)))
+        
+        sqlstreamid = kwargs['sqlstreamid']
+        self.sqlstreams[sqlstreamid]['state'] = 'running'
+
+        # remove ref to proc
+        self.sqlstreams[sqlstreamid].pop('proc', None)
+
+        # call app controller to let it know status
+        yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='running')
 
     #@defer.inlineCallbacks
     def pumps_off(self, sqlstreamid):
@@ -431,9 +455,29 @@ class AppAgent(Process):
         # TODO: execute sqllineClient and pipe the above into it
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
+        sspp = SSProcessProtocol(self, self._pumps_off_callback, sql_cmd, sqlstreamid=sqlstreamid)
+        processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
+        theargs = [processname]
+
+        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+
+
         # TODO: everyhting below here is fake and will be removed
-        if self.sqlstreams[sqlstreamid].has_key('proc'):
-            self.sqlstreams[sqlstreamid]['proc'].transport.signalProcess('KILL')
+        #if self.sqlstreams[sqlstreamid].has_key('proc'):
+        #    self.sqlstreams[sqlstreamid]['proc'].transport.signalProcess('KILL')
+    
+    @defer.inlineCallbacks
+    def _pumps_off_callback(self, exitcode, outlines, errlines, **kwargs):
+        log.debug("CALLBACK 2 for pumps OFF: %d, %s" % (exitcode, "\n".join(outlines)))
+
+        sqlstreamid = kwargs['sqlstreamid']
+        self.sqlstreams[sqlstreamid]['state'] = 'stopped'
+
+        # remove ref to proc
+        self.sqlstreams[sqlstreamid].pop('proc', None)
+
+        # let app controller know status
+        yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='stopped')
 
     @defer.inlineCallbacks
     def rpc_send(self, operation, content, headers=None, **kwargs):
@@ -453,10 +497,10 @@ class AppAgent(Process):
         TODO: this is temporary, only works with drain script. Replace with real comms to
         SQLStream.
         """
-        for (sqlstreamid, info) in self.sqlstreams:
-            if info.has_key('state') and info['state'] == 'running':
-                if info.has_key['proc']:
-                    info['proc'].transport.signalProcess('KILL')
+        #for (sqlstreamid, info) in self.sqlstreams:
+        #    if info.has_key('state') and info['state'] == 'running':
+        #        if info.has_key['proc']:
+        #            info['proc'].transport.signalProcess('KILL')
 #
 #
 # ########################################################
@@ -507,14 +551,43 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     """
     TODO: Class for connecting to SQLStream through Twisted
     """
+    def __init__(self, app_agent, callback, sqlcommands, **kwargs):
+        """
+        Initializes a process protocol for a SQLStream client.
+
+        @param app_agent    The application agent that is running this SQLStream client command.
+        @param callback     The method of application agent to call when the client finishes.
+        @param sqlcommands  SQL commands to run in the client.
+        """
+        self.app_agent = app_agent
+        self.callback = callback
+        self.sqlcommands = sqlcommands
+        self.callbackargs = kwargs
+
+        self.errlines = []
+        self.outlines = []
+
     def connectionMade(self):
         log.info("CONNECT")
 
-    def outReceived(self, data):
-        log.debug(data)
+        # pump the contents of sqlcommands into the sql client
+        self.transport.write(self.sqlcommands)
+        self.transport.closeStdin()
 
+    def outReceived(self, data):
+        log.debug(str(data))
+        self.outlines.append(data)
+
+    def errReceived(self, data):
+        log.debug("oh noes an error %s" % str(data))
+        self.errlines.append(data)
+
+    @defer.inlineCallbacks
     def processEnded(self, reason):
         log.info("PROC ENDED: %s" % reason.value.exitCode)
+
+        # call method in App Agent we set up when constructing
+        yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
 
 
 # Spawn of the process using the module name
