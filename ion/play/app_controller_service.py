@@ -354,7 +354,7 @@ class AppAgent(Process):
         Declares to the app controller that this op unit is ready. This indicates a freshly
         started op unit with no running SQLStream instances.
         """
-        (content, headers, msg) = yield self.rpc_send('opunit_ready', {'id':self.id.full, 'cores':2})
+        (content, headers, msg) = yield self.send_controller_rpc('opunit_ready', id=self.id.full, cores=2)
         defer.returnValue(str(content))
 
     @defer.inlineCallbacks
@@ -386,8 +386,7 @@ class AppAgent(Process):
         log.info("called later : sqlstream ready announce %s" % ssid)
 
         self.sqlstreams[ssid]['state'] = 'stopped'
-        yield self.rpc_send('sqlstream_ready', {'sqlstreamid':ssid,
-                                                'queue_name':self.sqlstreams[ssid]['queue_name']})
+        yield self.send_controller_rpc('sqlstream_ready', sqlstreamid=ssid, queue_name=self.sqlstreams[ssid]['queue_name'])
 
     @defer.inlineCallbacks
     def op_ctl_sqlstream(self, content, headers, msg):
@@ -439,7 +438,7 @@ class AppAgent(Process):
             self.sqlstreams[sqlstreamid]['state'] = 'running'
 
             # call app controller to let it know status
-            yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='running')
+            yield self.send_controller_rpc('sqlstream_status', sqlstreamid=sqlstreamid, status='running')
         else:
             log.warning("Could not turn pumps on for %s, SS # %d" % (self.id.full, sqlstreamid))
             # TODO: inform app controller?
@@ -484,20 +483,20 @@ class AppAgent(Process):
             self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
             # let app controller know status
-            yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='stopped')
+            yield self.send_controller_rpc('sqlstream_status', sqlstreamid=sqlstreamid, status='stopped')
         else:
             log.warning("Could not turn pumps off for %s, SS # %d" % (self.id.full, sqlstreamid))
 
     @defer.inlineCallbacks
-    def rpc_send(self, operation, content, headers=None, **kwargs):
+    def send_controller_rpc(self, operation, **kwargs):
         """
         Wrapper to make rpc calls a bit easier. Builds standard info into content message like
         our id.
         """
-        content.update({'id':self.id.full})
+        content = {'id':self.id.full}
         content.update(kwargs)
 
-        ret = yield Process.rpc_send(self, self.target, operation, content, headers, **kwargs)
+        ret = yield self.rpc_send(self.target, operation, content, {}, **kwargs)
         defer.returnValue(ret)
 
     def __del__(self):
@@ -567,6 +566,9 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         @param app_agent    The application agent that is running this SQLStream client command.
         @param callback     The method of application agent to call when the client finishes.
         @param sqlcommands  SQL commands to run in the client.
+
+        Additional parameters specified through keyword arguments are passed back to the
+        callback method as keyword arguments.
         """
         self.app_agent = app_agent
         self.callback = callback
