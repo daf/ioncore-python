@@ -431,13 +431,18 @@ class AppAgent(Process):
         log.debug("CALLBACK for pumps on: %d, %s" % (exitcode,"\n".join(outlines)))
         
         sqlstreamid = kwargs['sqlstreamid']
-        self.sqlstreams[sqlstreamid]['state'] = 'running'
 
         # remove ref to proc
         self.sqlstreams[sqlstreamid].pop('proc', None)
 
-        # call app controller to let it know status
-        yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='running')
+        if exitcode == 0:
+            self.sqlstreams[sqlstreamid]['state'] = 'running'
+
+            # call app controller to let it know status
+            yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='running')
+        else:
+            log.warning("Could not turn pumps on for %s, SS # %d" % (self.id.full, sqlstreamid))
+            # TODO: inform app controller?
 
     #@defer.inlineCallbacks
     def pumps_off(self, sqlstreamid):
@@ -471,13 +476,17 @@ class AppAgent(Process):
         log.debug("CALLBACK 2 for pumps OFF: %d, %s" % (exitcode, "\n".join(outlines)))
 
         sqlstreamid = kwargs['sqlstreamid']
-        self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
         # remove ref to proc
         self.sqlstreams[sqlstreamid].pop('proc', None)
+        
+        if exitcode == 0:
+            self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        # let app controller know status
-        yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='stopped')
+            # let app controller know status
+            yield self.rpc_send('sqlstream_status', {}, sqlstreamid=sqlstreamid, status='stopped')
+        else:
+            log.warning("Could not turn pumps off for %s, SS # %d" % (self.id.full, sqlstreamid))
 
     @defer.inlineCallbacks
     def rpc_send(self, operation, content, headers=None, **kwargs):
