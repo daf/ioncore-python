@@ -151,9 +151,6 @@ class AppControllerService(ServiceProcess):
         if op_unit_id != None and not self.workers.has_key(op_unit_id):
             log.error("request_sqlstream: op_unit (%s) requested but unknown" % op_unit_id)
         
-        # TODO: assign op_unit_id to it as well
-        self.unboundqueues.insert(0, queue_name)
-
         if op_unit_id == None:
             # find an available op unit
             for (worker,info) in self.workers.items():
@@ -170,6 +167,12 @@ class AppControllerService(ServiceProcess):
 
         if op_unit_id == None:
             log.info("request_sqlstream - requesting new operational unit")
+
+            # TODO: maybe assign op_unit_id to it as well?
+            # we're requesting an op unit start up, so put it in the available unbound queues
+            # next opunit to come available will get it.
+            self.unboundqueues.insert(0, queue_name)
+
             # request spawn new VM
             # wait for rpc message to app controller that says vm is up, then request sqlstream
             defer.returnValue(None)
@@ -211,7 +214,6 @@ class AppControllerService(ServiceProcess):
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
 
-        # TODO: pump sql stream config over here
         queue_name = None
         if len(self.unboundqueues):
             queue_name = self.unboundqueues.pop()
