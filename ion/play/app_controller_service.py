@@ -20,6 +20,7 @@ from ion.core.process.process import ProcessFactory, Process
 from ion.core.process.service_process import ServiceProcess, ServiceClient
 from ion.core.messaging import messaging
 from ion.core.messaging.receiver import Receiver
+from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
 
 import uuid
 
@@ -221,9 +222,9 @@ class AppControllerService(ServiceProcess):
         # update the sqldefs just in case they have changed via operation
         self._get_sql_def()
 
-        conf = { 'preserve_n' :         len(self.workers),
-                 'provisioner_vars' :   self.prov_vars,
-                 'unique_instances' : {} }
+        conf = { 'preserve_n'         : len(self.workers),
+                 PROVISIONER_VARS_KEY : self.prov_vars,
+                 'unique_instances'   : {} }
 
         for (wid, winfo) in self.workers.items():
             conf['unique_instances'][wid] = { 'sqlstreams' : [] }
