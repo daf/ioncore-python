@@ -21,6 +21,8 @@ from ion.core.process.service_process import ServiceProcess, ServiceClient
 from ion.core.messaging import messaging
 from ion.core.messaging.receiver import Receiver
 
+import uuid
+
 try:
     import json
 except:
@@ -46,7 +48,12 @@ class AppControllerService(ServiceProcess):
         self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
         self.unboundqueues = [] # list of queues waiting to be assigned to sqlstreams (op unit is starting up)
-        self.sqldefs = None     # cached copy of SQLStream SQL definition templates from disk
+
+        # provisioner vars are common vars for all worker instances
+        self.prov_vars = { 'sqldefs' : None,        # cached copy of SQLStream SQL definition templates from disk
+                           'inp_exchange' : EXCHANGE_NAME,
+                           'det_topic' : DETECTION_TOPIC,
+                           'det_exchange' : EXCHANGE_NAME }
 
     @defer.inlineCallbacks
     def slc_init(self):
@@ -123,7 +130,10 @@ class AppControllerService(ServiceProcess):
 
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
-            yield self.request_sqlstream(queue_name)
+            try:
+                yield self.request_sqlstream(queue_name)
+            except Exception,e:
+                log.error("seomthing dyde %s" % str(e))
             
         self.routing[queue_name].append(station_name)
         
@@ -154,7 +164,7 @@ class AppControllerService(ServiceProcess):
         if op_unit_id == None:
             # find an available op unit
             for (worker,info) in self.workers.items():
-                availcores = info['cores'] - (len(info['sqlstreams']) * CORES_PER_SQLSTREAM)
+                availcores = info['type']['cores'] - (len(info['sqlstreams']) * CORES_PER_SQLSTREAM)
                 if availcores >= CORES_PER_SQLSTREAM:
                     log.info("request_sqlstream - asking existing operational unit (%s) to spawn new SQLStream" % worker)
                     # Request spawn new sqlstream instance on this worker
@@ -168,18 +178,64 @@ class AppControllerService(ServiceProcess):
                     break
 
         if op_unit_id == None:
-            log.info("request_sqlstream - requesting new operational unit")
+            op_unit_id = str(uuid.uuid4())[:8]
+            log.info("request_sqlstream - requesting new operational unit %s" % op_unit_id)
+
+        # now we have an op_unit_id, update the config
+        if not self.workers.has_key(op_unit_id):
+            self.workers[op_unit_id] = {'type' : {'cores':2},
+                                        'state' : {},
+                                        'sqlstreams' : []}
+            streamcount = 0
+        else:
+            streamcount = len(self.workers[op_unit_id]['sqlstreams'])
+
+        stream_conf = { 'inp_queue' : queue_name,
+                        'port'      : 9000 + streamcount + 1 }
+
+        self.workers[op_unit_id]['sqlstreams'].append( { 'conf' : stream_conf,
+                                                         'state': {} })
+
+        yield self.request_reconfigure()
 
             # TODO: maybe assign op_unit_id to it as well?
             # we're requesting an op unit start up, so put it in the available unbound queues
             # next opunit to come available will get it.
-            self.unboundqueues.insert(0, queue_name)
+            #self.unboundqueues.insert(0, queue_name)
 
             # request spawn new VM
             # wait for rpc message to app controller that says vm is up, then request sqlstream
-            defer.returnValue(None)
-        else:
-            yield self._start_sqlstream(worker, queue_name)
+            #defer.returnValue(None)
+        #else:
+            #yield self._start_sqlstream(worker, queue_name)
+
+    @defer.inlineCallbacks
+    def request_reconfigure(self):
+        """
+        Requests a reconfiguration from the Decision Engine. This takes care of provisioning
+        workers.
+
+        This method builds the JSON required to reconfigure/configure the decision engine.
+        """
+
+        # update the sqldefs just in case they have changed via operation
+        self._get_sql_def()
+
+        conf = { 'preserve_n' :         len(self.workers),
+                 'provisioner_vars' :   self.prov_vars,
+                 'unique_instances' : {} }
+
+        for (wid, winfo) in self.workers.items():
+            conf['unique_instances'][wid] = { 'sqlstreams' : [] }
+            ssdefs = conf['unique_instances'][wid]['sqlstreams']
+            for ssinfo in winfo['sqlstreams']:
+                ssdefs.append( { 'port' : ssinfo['conf']['port'],
+                                 'sqlt_vars' : { 'inp_queue' : ssinfo['conf']['inp_queue'] } } )
+
+        print json.dumps(conf)
+
+        # TODO: actually request
+        defer.returnValue(None)
          
     @defer.inlineCallbacks
     def _recv_data(self, data, msg):
@@ -257,8 +313,8 @@ class AppControllerService(ServiceProcess):
         #inp_queue, inp_exchange, out_queue, out_exchange, nostore=False):
         nostore = kwargs.pop('nostore', False)
 
-        if self.sqldefs != None:
-            fulltemplate = self.sqldefs
+        if self.prov_vars['sqldefs'] != None:
+            fulltemplate = self.prov_vars['sqldefs']
         else:
             fulltemplatelist = []
             for filename in ["catalog.sqlt", "detections.sqlt", "validate.sqlt"]:
@@ -269,12 +325,15 @@ class AppControllerService(ServiceProcess):
             fulltemplate = "\n".join(fulltemplatelist)
 
             if not nostore:
-                self.sqldefs = fulltemplate
+                self.prov_vars['sqldefs'] = fulltemplate
+
+        # NO LONGER SUBSTITUTES - THE AGENT DOES THIS NOW
+        return fulltemplate
 
         # template replace fulltemplates with kwargs
-        t = string.Template(fulltemplate)
-        defs = t.substitute(kwargs)
-        return defs
+        #t = string.Template(fulltemplate)
+        #defs = t.substitute(kwargs)
+        #return defs
 
     @defer.inlineCallbacks
     def op_set_sql_defs(self, content, headers, msg):
@@ -302,7 +361,7 @@ class AppControllerService(ServiceProcess):
         replacement variables via keyword arguments to the method. self._start_sqlstream
         is an example user of that replacement method.
         """
-        self.sqldefs = content['content']
+        self.prov_vars['sqldefs'] = content['content']
         yield self.reply_ok(msg, {'value':'ok'}, {})
 
     @defer.inlineCallbacks
