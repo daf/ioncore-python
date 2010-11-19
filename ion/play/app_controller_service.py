@@ -437,12 +437,25 @@ class AppAgent(Process):
         self.target = self.get_scoped_name('system', "app_controller")
         self.sqlstreams = {}
 
-    def _get_sql_defs(self, **kwargs):
+        # check spawn args for sqlstreams, start them up as appropriate
+        # expect a stringify'd python array of dicts
+        if self.spawn_args.has_key('sqlstreams'):
+            sqlstreams = eval(self.spawn_args['sqlstreams'])
+
+            for ssinfo in sqlstreams:
+                port = ssinfo['port']
+                inp_queue = ssinfo['sqlt_vars']['inp_queue']
+                defs = self._get_sql_defs(ssinfo['sqlt_vars'])
+
+                self.start_sqlstream(port, inp_queue, defs)
+
+    def _get_sql_defs(self, uconf, **kwargs):
         """
         Returns a fully substituted SQLStream SQL definition string.
         Using keyword arguments, you can update the default params passed in to spawn args.
         """
         conf = self.spawn_args['sqlt_vars'].copy()
+        conf.update(uconf)
         conf.update(kwargs)
 
         template = string.Template(self.spawn_args['sqldefs'])
