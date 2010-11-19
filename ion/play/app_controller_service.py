@@ -424,26 +424,41 @@ class AppAgent(Process):
         The app controller calls here when it determines the op unit should spawn a new
         processing SQLStream.
         """
-        ssid = len(self.sqlstreams.keys()) + 1
-        self.sqlstreams[ssid] = {'id':ssid,
+        log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
+
+        self.start_sqlstream(None, content['queue_name'], content['sql_defs'])
+
+        yield self.reply_ok(msg, {'value':'ok'}, {})
+
+    #@defer.inlineCallbacks
+    def start_sqlstream(self, ssid, queue_name, sql_defs):
+
+        # pick a new ssid/port if None passed in (which is typical)
+        if ssid == None:
+            start = 9001
+            while start in self.sqlstreams.keys():
+                start += 1
+            ssid = start
+
+        self.sqlstreams[ssid] = {'port':ssid,
                                  'state':'starting',
                                  'queue_name':content['queue_name'],
                                  'sql_defs':content['sql_defs']}
 
-        log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
-        print str(self.sqlstreams[ssid])
+        log.debug("Starting SQLStream")
 
-        reactor.callLater(5, self._pretend_sqlstream_started, None, **{'sqlstreamid':ssid})
+        sspp = SSProcessProtocol(self, self._sqlstream_started, content['sql_defs'], sqlstreamid=ssid)
+        processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
+        theargs = [processname]
 
-        yield self.reply_ok(msg, {'value':'ok'}, {})
+        self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
 
     @defer.inlineCallbacks
-    def _pretend_sqlstream_started(self, *args, **kwargs):
+    def _sqlstream_started(self, *args, **kwargs):
         """
-        @TODO: remove, this is to simulate a SQLStream instance starting
         """
         ssid = kwargs.get('sqlstreamid')
-        log.info("called later : sqlstream ready announce %s" % ssid)
+        log.debug("callback : sqlstream ready announce %s" % ssid)
 
         self.sqlstreams[ssid]['state'] = 'stopped'
         yield self.send_controller_rpc('sqlstream_ready', sqlstreamid=ssid, queue_name=self.sqlstreams[ssid]['queue_name'])
