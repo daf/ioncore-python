@@ -51,10 +51,10 @@ class AppControllerService(ServiceProcess):
         self.unboundqueues = [] # list of queues waiting to be assigned to sqlstreams (op unit is starting up)
 
         # provisioner vars are common vars for all worker instances
-        self.prov_vars = { 'sqldefs' : None,        # cached copy of SQLStream SQL definition templates from disk
-                           'inp_exchange' : EXCHANGE_NAME,
-                           'det_topic' : DETECTION_TOPIC,
-                           'det_exchange' : EXCHANGE_NAME }
+        self.prov_vars = { 'sqldefs'   : None,        # cached copy of SQLStream SQL definition templates from disk
+                           'sqlt_vars' : { 'inp_exchange' : EXCHANGE_NAME,
+                                           'det_topic'    : DETECTION_TOPIC,
+                                           'det_exchange' : EXCHANGE_NAME } }
 
     @defer.inlineCallbacks
     def slc_init(self):
