@@ -33,6 +33,9 @@ STATIONS_PER_QUEUE = 2
 CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
 EXCHANGE_NAME = "magnet.topic"
 DETECTION_TOPIC = "anf.detections"
+SSD_READY_STRING = "Server ready; enter"
+SSD_BIN = "/usr/local/sqlstream/SQLstream-2.5/bin/SQLstreamd"  # TODO: path search ourselves?
+SSC_BIN = "/usr/local/sqlstream/SQLstream-2.5/bin/sqllineClient" 
 
 class AppControllerService(ServiceProcess):
     """
@@ -487,21 +490,58 @@ class AppAgent(Process):
 
         log.debug("Starting SQLStream")
 
-        sspp = SSProcessProtocol(self, self._sqlstream_started, sql_defs, sqlstreamid=ssid)
-        processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
+        sspp = SSServerProcessProtocol(self, self._sqlstream_ended, ready_callback=self._sqlstream_started, sqlstreamid=ssid)
+        processname = SSD_BIN
         theargs = [processname]
 
-        self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+        self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+
+    @defer.inlineCallbacks
+    def _sqlstream_ended(self, exitcode, outlines, errlines, **kwargs):
+        """
+        SQLStream daemon has ended.
+        """
+        ssid = kwargs.get('sqlstreamid')
+        log.debug("SQLStream (%s) has ended" % ssid)
+
+        defer.returnValue(None)
 
     @defer.inlineCallbacks
     def _sqlstream_started(self, *args, **kwargs):
         """
+        SQLStream daemon has started.
         """
         ssid = kwargs.get('sqlstreamid')
-        log.debug("callback : sqlstream ready announce %s" % ssid)
+        log.debug("SQLStream server (%s) has started" % ssid)
 
-        self.sqlstreams[ssid]['state'] = 'stopped'
-        yield self.send_controller_rpc('sqlstream_ready', sqlstreamid=ssid, queue_name=self.sqlstreams[ssid]['queue_name'])
+        sspp = SSClientProcessProtocol(self, self._sqlstream_defs_loaded, sqlcommands=self.sqlstreams[ssid]['sql_defs'], sqlstreamid=ssid)
+        processname = SSC_BIN
+        theargs = [processname]
+
+        self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+
+        defer.returnValue(None)
+
+    @defer.inlineCallbacks
+    def _sqlstream_defs_loaded(self, exitcode, outlines, errlines, **kwargs):
+        """
+        SQLStream defs have finished loading.
+        Begins starting pumps.
+        """
+        ssid = kwargs.get('sqlstreamid')
+        log.debug("SQLStream server (%s) has loaded defs" % ssid)
+
+        # remove ref to proc
+        self.sqlstreams[ssid].pop('proc', None)
+
+        if exitcode == 0:
+            self.sqlstreams[ssid]['state'] = 'stopped'
+            self.pumps_on(ssid)
+        else:
+            log.warning("Loading defs failed, SS # %d" % ssid)
+            # TODO: inform app controller?
+
+        defer.returnValue(None)
 
     @defer.inlineCallbacks
     def op_ctl_sqlstream(self, content, headers, msg):
@@ -534,7 +574,7 @@ class AppAgent(Process):
         # TODO: execute sqllineClient and pipe the above into it
 
         # TODO: everything below here is fake and will be removed
-        sspp = SSProcessProtocol(self, self._pumps_on_callback, sql_cmd, sqlstreamid=sqlstreamid)
+        sspp = SSClientProcessProtocol(self, self._pumps_on_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
         processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
         theargs = [processname]
 
@@ -574,7 +614,7 @@ class AppAgent(Process):
         # TODO: execute sqllineClient and pipe the above into it
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        sspp = SSProcessProtocol(self, self._pumps_off_callback, sql_cmd, sqlstreamid=sqlstreamid)
+        sspp = SSClientProcessProtocol(self, self._pumps_off_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
         processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
         theargs = [processname]
 
@@ -674,47 +714,86 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     """
     TODO: Class for connecting to SQLStream through Twisted
     """
-    def __init__(self, app_agent, callback, sqlcommands, **kwargs):
+    def __init__(self, app_agent, callback, **kwargs):
         """
-        Initializes a process protocol for a SQLStream client.
+        Initializes a process protocol for a SQLStream client or server.
 
         @param app_agent    The application agent that is running this SQLStream client command.
         @param callback     The method of application agent to call when the client finishes.
-        @param sqlcommands  SQL commands to run in the client.
 
         Additional parameters specified through keyword arguments are passed back to the
         callback method as keyword arguments.
         """
         self.app_agent = app_agent
         self.callback = callback
-        self.sqlcommands = sqlcommands
         self.callbackargs = kwargs
 
         self.errlines = []
         self.outlines = []
 
     def connectionMade(self):
-        log.info("CONNECT")
-
-        # pump the contents of sqlcommands into the sql client
-        self.transport.write(self.sqlcommands)
-        self.transport.closeStdin()
+        log.debug("SSProcessProtocol: process started")
 
     def outReceived(self, data):
-        log.debug(str(data))
         self.outlines.append(data)
 
     def errReceived(self, data):
-        log.debug("oh noes an error %s" % str(data))
         self.errlines.append(data)
 
     @defer.inlineCallbacks
     def processEnded(self, reason):
-        log.info("PROC ENDED: %s" % reason.value.exitCode)
+        log.debug("SSProcessProtocol: process ended (exitcode: %d)" % reason.value.exitCode)
 
         # call method in App Agent we set up when constructing
         yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
 
+#
+#
+# ########################################################
+#
+#
+
+class SSClientProcessProtocol(SSProcessProtocol):
+    """
+    SQLStream client process protocol.
+    Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
+    it will execute the commands upon launching the client process.
+    """
+    def __init__(self, app_agent, callback, **kwargs):
+        """
+        @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
+        """
+        self.sqlcommands = kwargs.pop('sqlcommands', None)
+        SSProcessProtocol.__init__(self, app_agent, callback, **kwargs)
+
+    def connectionMade(self):
+        SSProcessProtocol.connectionMade(self)
+
+        # pump the contents of sqlcommands into stdin
+        if self.sqlcommands != None:
+            self.transport.write(self.sqlcommands)
+            self.transport.closeStdin()
+
+#
+#
+# ########################################################
+#
+#
+
+class SSServerProcessProtocol(SSProcessProtocol):
+    def __init__(self, app_agent, callback, **kwargs):
+        """
+        @param ready_callback   Callback that is called when the server reports it is ready. That callback gets any additional kwargs passed here.
+        """
+        self.ready_callback = kwargs.pop('ready_callback', None)
+        SSProcessProtocol.__init__(self, app_agent, callback, **kwargs)
+
+    @defer.inlineCallbacks
+    def outReceived(self, data):
+        SSProcessProtocol.outReceived(self, data)
+        if (SSD_READY_STRING in data):
+            yield self.ready_callback(**self.callbackargs)
+ 
 
 # Spawn of the process using the module name
 factory = ProcessFactory(AppControllerService)
