@@ -222,6 +222,9 @@ class AppControllerService(ServiceProcess):
         # update the sqldefs just in case they have changed via operation
         self._get_sql_def()
 
+        provvars = self.prov_vars.copy()
+        provvars['sqldefs'] = provvars['sqldefs'].replace("$", "$$")    # escape template vars once so it doesn't get clobbered in provisioner replacement
+
         conf = { 'preserve_n'         : len(self.workers),
                  PROVISIONER_VARS_KEY : self.prov_vars,
                  'unique_instances'   : {} }
