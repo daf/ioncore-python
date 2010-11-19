@@ -159,6 +159,13 @@ class AppControllerService(ServiceProcess):
         @param queue_name   The queue the SQL Stream unit should consume from.
         @param op_unit_id   The operational unit id that should be used to create a SQL Stream instance. If specified, will always create on that op unit. Otherwise, it will find available space on an existing VM or create a new VM.
         """
+
+        # if this var is true, at the end of this method, instead of reconfiguring via
+        # the decision engine, we will directly ask the agent on op_unit_id to spawn the 
+        # sqlstream engine. This will hopefully be taken out when we can reconfigure 
+        # workers on the fly.
+        direct_request = False
+
         if op_unit_id != None and not self.workers.has_key(op_unit_id):
             log.error("request_sqlstream: op_unit (%s) requested but unknown" % op_unit_id)
         
@@ -172,10 +179,12 @@ class AppControllerService(ServiceProcess):
                     # wait for rpc message to app controller that says sqlstream is up
                     op_unit_id = worker
 
+                    direct_request = True
+
                     # record the fact we are using this worker now
                     # TODO : needs to be an integer to indicate number of starting up, or a
                     # unique key per each starter
-                    info['sqlstreams']['spawning'] = True
+                    #info['sqlstreams']['spawning'] = True
                     break
 
         if op_unit_id == None:
@@ -197,7 +206,10 @@ class AppControllerService(ServiceProcess):
         self.workers[op_unit_id]['sqlstreams'].append( { 'conf' : stream_conf,
                                                          'state': {} })
 
-        yield self.request_reconfigure()
+        if direct_request == True:
+            yield self._start_sqlstream(op_unit_id, stream_conf)
+        else:
+            yield self.request_reconfigure()
 
             # TODO: maybe assign op_unit_id to it as well?
             # we're requesting an op unit start up, so put it in the available unbound queues
@@ -218,6 +230,8 @@ class AppControllerService(ServiceProcess):
 
         This method builds the JSON required to reconfigure/configure the decision engine.
         """
+
+        # TODO: likely does not need to send prov vars every time as this is reconfigure
 
         # update the sqldefs just in case they have changed via operation
         self._get_sql_def()
@@ -290,7 +304,16 @@ class AppControllerService(ServiceProcess):
         # in the list used by request_sqlstream
 
     @defer.inlineCallbacks
-    def _start_sqlstream(self, id, queue_name):
+    def _start_sqlstream(self, worker_id, conf):
+        """
+        Tells an op unit to start a SQLStream instance.
+        TODO: Replace this when provisioner can handle reconfigure.
+        """
+
+        yield self.rpc_send(worker_id, 'start_sqlstream', conf)
+
+    @defer.inlineCallbacks
+    def _OLD_start_sqlstream(self, id, queue_name):
         """
         Tells an op unit with the given id to start a SQLStream instance.
         """
@@ -411,6 +434,17 @@ class AppAgent(Process):
         self.target = self.get_scoped_name('system', "app_controller")
         self.sqlstreams = {}
 
+    def _get_sql_defs(self, **kwargs):
+        """
+        Returns a fully substituted SQLStream SQL definition string.
+        Using keyword arguments, you can update the default params passed in to spawn args.
+        """
+        conf = self.spawn_args['sqlt_vars'].copy()
+        conf.update(kwargs)
+
+        template = string.Template(self.spawn_args['sqldefs'])
+        return template.substitute(conf)
+
     @defer.inlineCallbacks
     def opunit_ready(self):
         """
@@ -429,14 +463,17 @@ class AppAgent(Process):
         """
         log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
 
-        self.start_sqlstream(None, content['queue_name'], content['sql_defs'])
+        port = content['port']
+        defs = self._get_sql_defs(content)
+
+        self.start_sqlstream(port, content['inp_queue'], defs)
 
         yield self.reply_ok(msg, {'value':'ok'}, {})
 
     #@defer.inlineCallbacks
-    def start_sqlstream(self, ssid, queue_name, sql_defs):
+    def start_sqlstream(self, ssid, inp_queue, sql_defs):
 
-        # pick a new ssid/port if None passed in (which is typical)
+        # pick a new ssid/port if None passed in (which is atypical)
         if ssid == None:
             start = 9001
             while start in self.sqlstreams.keys():
@@ -445,12 +482,12 @@ class AppAgent(Process):
 
         self.sqlstreams[ssid] = {'port':ssid,
                                  'state':'starting',
-                                 'queue_name':content['queue_name'],
-                                 'sql_defs':content['sql_defs']}
+                                 'inp_queue':inp_queue,
+                                 'sql_defs':sql_defs}
 
         log.debug("Starting SQLStream")
 
-        sspp = SSProcessProtocol(self, self._sqlstream_started, content['sql_defs'], sqlstreamid=ssid)
+        sspp = SSProcessProtocol(self, self._sqlstream_started, sql_defs, sqlstreamid=ssid)
         processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
         theargs = [processname]
 
