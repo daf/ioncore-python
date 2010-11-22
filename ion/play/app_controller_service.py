@@ -507,7 +507,7 @@ class AppAgent(Process):
         processname = SSD_BIN
         theargs = [processname]
 
-        self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+        self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
     @defer.inlineCallbacks
     def _sqlstream_ended(self, exitcode, outlines, errlines, **kwargs):
@@ -531,7 +531,7 @@ class AppAgent(Process):
         processname = SSC_BIN
         theargs = [processname]
 
-        self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+        self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
         defer.returnValue(None)
 
@@ -591,7 +591,7 @@ class AppAgent(Process):
         processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
         theargs = [processname]
 
-        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
     @defer.inlineCallbacks
     def _pumps_on_callback(self, exitcode, outlines, errlines, **kwargs):
@@ -631,7 +631,7 @@ class AppAgent(Process):
         processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
         theargs = [processname]
 
-        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs)
+        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
 
         # TODO: everyhting below here is fake and will be removed
