@@ -449,6 +449,12 @@ class AppAgent(Process):
 
                 self.start_sqlstream(port, inp_queue, defs)
 
+    def kill_sqlstreams(self):
+        for sinfo in self.sqlstreams.values():
+            if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
+                sinfo['serverproc'].write('!quit')
+                sinfo['serverproc'].closeStdin()
+
     def _get_sql_defs(self, uconf, **kwargs):
         """
         Returns a fully substituted SQLStream SQL definition string.
@@ -509,7 +515,7 @@ class AppAgent(Process):
 
         self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
-    @defer.inlineCallbacks
+    #@defer.inlineCallbacks
     def _sqlstream_ended(self, exitcode, outlines, errlines, **kwargs):
         """
         SQLStream daemon has ended.
@@ -517,9 +523,9 @@ class AppAgent(Process):
         ssid = kwargs.get('sqlstreamid')
         log.debug("SQLStream (%s) has ended" % ssid)
 
-        defer.returnValue(None)
+        #defer.returnValue(None)
 
-    @defer.inlineCallbacks
+    #@defer.inlineCallbacks
     def _sqlstream_started(self, *args, **kwargs):
         """
         SQLStream daemon has started.
@@ -533,9 +539,7 @@ class AppAgent(Process):
 
         self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
-        defer.returnValue(None)
-
-    @defer.inlineCallbacks
+    #@defer.inlineCallbacks
     def _sqlstream_defs_loaded(self, exitcode, outlines, errlines, **kwargs):
         """
         SQLStream defs have finished loading.
@@ -554,7 +558,7 @@ class AppAgent(Process):
             log.warning("Loading defs failed, SS # %d" % ssid)
             # TODO: inform app controller?
 
-        defer.returnValue(None)
+        #defer.returnValue(None)
 
     @defer.inlineCallbacks
     def op_ctl_sqlstream(self, content, headers, msg):
