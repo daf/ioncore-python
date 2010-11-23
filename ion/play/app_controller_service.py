@@ -55,7 +55,8 @@ class AppControllerService(ServiceProcess):
 
         # provisioner vars are common vars for all worker instances
         self.prov_vars = { 'sqldefs'   : None,        # cached copy of SQLStream SQL definition templates from disk
-                           'sqlt_vars' : { 'inp_exchange' : EXCHANGE_NAME,
+                           'sqlt_vars' : { 'server_host'  : 'localhost',
+                                           'inp_exchange' : EXCHANGE_NAME,
                                            'det_topic'    : DETECTION_TOPIC,
                                            'det_exchange' : EXCHANGE_NAME } }
 
