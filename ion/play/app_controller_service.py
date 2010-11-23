@@ -348,8 +348,8 @@ class AppControllerService(ServiceProcess):
             fulltemplate = self.prov_vars['sqldefs']
         else:
             fulltemplatelist = []
-            for filename in ["catalog.sqlt", "detections.sqlt", "validate.sqlt"]:
-                f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", "catalog.sqlt"), "r")
+            for filename in ["catalog.sqlt", "funcs.sqlt", "detections.sqlt", "validate.sqlt"]:
+                f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
                 fulltemplatelist.extend(f.readlines())
                 f.close()
 
