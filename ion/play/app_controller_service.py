@@ -453,8 +453,26 @@ class AppAgent(Process):
     def kill_sqlstreams(self):
         for sinfo in self.sqlstreams.values():
             if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
-                sinfo['serverproc'].write('!quit')
-                sinfo['serverproc'].closeStdin()
+                if sinfo.has_key("serverproc_shutdown"):
+                    cmd = "!kill"
+                else:
+                    cmd = "!quit"
+
+                sinfo['serverproc'].write('%s\n' % cmd)
+                sinfo['serverproc_shutdown'] = True         # flag to indicate we've tried before
+
+    def kill_sqlstream_clients(self):
+        for sinfo in self.sqlstreams.values():
+            if sinfo.has_key('proc') and sinfo['proc'] != None:
+                if sinfo.has_key('proc_shutdown'):
+                    sinfo['proc'].signalProcess('KILL')
+                    sinfo['proc'].loseConnection()
+                    sinfo.pop('proc_shutdown', None)
+                    sinfo.pop('proc', None)
+                else:
+                    sinfo['proc'].closeStdin()
+                    sinfo['proc'].signalProcess('TERM')
+                    sinfo['proc_shutdown'] = True
 
     def _get_sql_defs(self, uconf, **kwargs):
         """
@@ -523,6 +541,7 @@ class AppAgent(Process):
         """
         ssid = kwargs.get('sqlstreamid')
         log.debug("SQLStream (%s) has ended" % ssid)
+        self.sqlstreams[ssid].pop('serverproc', None)
 
         #defer.returnValue(None)
 
@@ -530,10 +549,16 @@ class AppAgent(Process):
     def _sqlstream_started(self, *args, **kwargs):
         """
         SQLStream daemon has started.
+        Calls _load_sqlstream_defs.
         """
         ssid = kwargs.get('sqlstreamid')
         log.debug("SQLStream server (%s) has started" % ssid)
+        self._load_sqlstream_defs(ssid)
 
+    def _load_sqlstream_defs(self, ssid):
+        """
+        Spawns a SQLStream client to load the definitions of seismic app into the SQLStream instance.
+        """
         sspp = SSClientProcessProtocol(self, self._sqlstream_defs_loaded, sqlcommands=self.sqlstreams[ssid]['sql_defs'], sqlstreamid=ssid)
         processname = SSC_BIN
         theargs = [processname]
@@ -593,7 +618,7 @@ class AppAgent(Process):
 
         # TODO: everything below here is fake and will be removed
         sspp = SSClientProcessProtocol(self, self._pumps_on_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
-        processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
+        processname = SSC_BIN
         theargs = [processname]
 
         self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
@@ -633,7 +658,7 @@ class AppAgent(Process):
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
         sspp = SSClientProcessProtocol(self, self._pumps_off_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
-        processname = '/Users/asadeveloper/tmp/fakesqlclient.py'
+        processname = SSC_BIN
         theargs = [processname]
 
         self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
