@@ -788,8 +788,10 @@ class SSClientProcessProtocol(SSProcessProtocol):
 
         # pump the contents of sqlcommands into stdin
         if self.sqlcommands != None:
-            self.transport.write(self.sqlcommands)
-            self.transport.closeStdin()
+            try:
+                self.transport.write(self.sqlcommands.encode('ascii', 'ignore'))
+            finally:
+                self.transport.closeStdin()
 
 #
 #
