@@ -8,9 +8,6 @@
 SET SCHEMA 'UCSD';
 SET PATH 'UCSD';
 
--- path is relative to seismic project directory
-!run sql/funcs.sql
-
 -- CALCULATIONS --
 -- (As a chain of views, only for clearer exposition).
 
