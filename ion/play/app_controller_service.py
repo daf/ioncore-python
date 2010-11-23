@@ -23,6 +23,8 @@ from ion.core.messaging.receiver import Receiver
 from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
 
 import uuid
+import zlib
+import base64
 
 try:
     import json
@@ -241,7 +243,7 @@ class AppControllerService(ServiceProcess):
         self._get_sql_def()
 
         provvars = self.prov_vars.copy()
-        provvars['sqldefs'] = provvars['sqldefs'].replace("$", "$$")    # escape template vars once so it doesn't get clobbered in provisioner replacement
+        #provvars['sqldefs'] = provvars['sqldefs'].replace("$", "$$")    # escape template vars once so it doesn't get clobbered in provisioner replacement
 
         conf = { 'preserve_n'         : len(self.workers),
                  PROVISIONER_VARS_KEY : self.prov_vars,
@@ -356,7 +358,8 @@ class AppControllerService(ServiceProcess):
             fulltemplate = "\n".join(fulltemplatelist)
 
             if not nostore:
-                self.prov_vars['sqldefs'] = fulltemplate
+                fullcompressed = zlib.compress(fulltemplate)
+                self.prov_vars['sqldefs'] = base64.b64encode(fullcompressed)
 
         # NO LONGER SUBSTITUTES - THE AGENT DOES THIS NOW
         return fulltemplate
@@ -446,7 +449,7 @@ class AppAgent(Process):
             for ssinfo in sqlstreams:
                 port = ssinfo['port']
                 inp_queue = ssinfo['sqlt_vars']['inp_queue']
-                defs = self._get_sql_defs(ssinfo['sqlt_vars'])
+                defs = self._get_sql_defs(self.spawn_args['sqldefs'], ssinfo['sqlt_vars'])
 
                 self.start_sqlstream(port, inp_queue, defs)
 
@@ -474,7 +477,7 @@ class AppAgent(Process):
                     sinfo['proc'].signalProcess('TERM')
                     sinfo['proc_shutdown'] = True
 
-    def _get_sql_defs(self, uconf, **kwargs):
+    def _get_sql_defs(self, sqldefs, uconf, **kwargs):
         """
         Returns a fully substituted SQLStream SQL definition string.
         Using keyword arguments, you can update the default params passed in to spawn args.
@@ -483,7 +486,11 @@ class AppAgent(Process):
         conf.update(uconf)
         conf.update(kwargs)
 
-        template = string.Template(self.spawn_args['sqldefs'])
+        # uncompress defs
+        compdefs = base64.b64decode(sqldefs)
+        defs = zlib.decompress(compdefs)
+
+        template = string.Template(defs)
         return template.substitute(conf)
 
     @defer.inlineCallbacks
@@ -505,7 +512,7 @@ class AppAgent(Process):
         log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
 
         port = content['port']
-        defs = self._get_sql_defs(content)
+        defs = self._get_sql_defs(content)  # TODO : UPDATE
 
         self.start_sqlstream(port, content['inp_queue'], defs)
 
