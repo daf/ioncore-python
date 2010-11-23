@@ -20,18 +20,18 @@ CREATE OR REPLACE FOREIGN DATA WRAPPER "AmqpWrapper"
     LANGUAGE JAVA;
 
 -- declare AMQP data server
-CREATE OR REPLACE SERVER "UcsdServer"
+CREATE OR REPLACE SERVER "AMQPServer"
     FOREIGN DATA WRAPPER "AmqpWrapper"
     OPTIONS (
-        HOST 'localhost', VHOST '/',
-        USERNAME 'guest', PASSWORD 'guest'
+        HOST '${server_host}', VHOST '/'
+        -- USERNAME 'guest', PASSWORD 'guest'
     );
 
 -- subscribe to raw signal messages, as a stream
 CREATE FOREIGN STREAM "RawSignalMessages" (
        header varchar(256),
        body   varbinary(2048))
-    SERVER "UcsdServer"
+    SERVER "AMQPServer"
     OPTIONS (EXCHANGE '${inp_exchange}', QUEUE '${inp_queue}', TYPE 'READER');
 
 

@@ -259,7 +259,7 @@ CREATE FOREIGN STREAM "DetectionMessages" (
       t bigint,
       tag varchar(3)
   )
-  SERVER "UcsdServer"
+  SERVER "AMQPServer"
   OPTIONS (EXCHANGE '${det_exchange}', TOPIC '${det_topic}', TYPE 'WRITER');
 
 CREATE OR REPLACE PUMP "DetectionMessagesPump" STOPPED AS
