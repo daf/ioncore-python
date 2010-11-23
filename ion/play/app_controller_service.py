@@ -349,7 +349,7 @@ class AppControllerService(ServiceProcess):
         else:
             fulltemplatelist = []
             for filename in ["catalog.sqlt", "detections.sqlt", "validate.sqlt"]:
-                f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", "catalog.sqlt"), "r")
+                f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
                 fulltemplatelist.extend(f.readlines())
                 f.close()
 
