@@ -447,6 +447,8 @@ class AppAgent(Process):
         Constructor.
         Gathers information about the system this agent is running on.
         """
+        Process.__init__(self)
+
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
 
