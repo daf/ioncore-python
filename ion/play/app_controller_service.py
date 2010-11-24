@@ -184,7 +184,7 @@ class AppControllerService(ServiceProcess):
         if op_unit_id == None:
             # find an available op unit
             for (worker,info) in self.workers.items():
-                availcores = info['type']['cores'] - (len(info['sqlstreams']) * CORES_PER_SQLSTREAM)
+                availcores = info['metrics']['cores'] - (len(info['sqlstreams']) * CORES_PER_SQLSTREAM)
                 if availcores >= CORES_PER_SQLSTREAM:
                     log.info("request_sqlstream - asking existing operational unit (%s) to spawn new SQLStream" % worker)
                     # Request spawn new sqlstream instance on this worker
@@ -205,14 +205,14 @@ class AppControllerService(ServiceProcess):
 
         # now we have an op_unit_id, update the config
         if not self.workers.has_key(op_unit_id):
-            self.workers[op_unit_id] = {'type' : {'cores':2},
+            self.workers[op_unit_id] = {'metrics' : {'cores':2}, # all workers should have at least two, will be updated when status is updated
                                         'state' : {},
                                         'sqlstreams' : []}
             streamcount = 0
         else:
             streamcount = len(self.workers[op_unit_id]['sqlstreams'])
 
-        stream_conf = { 'inp_queue' : queue_name,
+        stream_conf = { 'sqlt_vars' : { 'inp_queue' : queue_name },
                         'port'      : 9000 + streamcount + 1 }
 
         self.workers[op_unit_id]['sqlstreams'].append( { 'conf' : stream_conf,
@@ -259,8 +259,8 @@ class AppControllerService(ServiceProcess):
             conf['unique_instances'][wid] = { 'sqlstreams' : [] }
             ssdefs = conf['unique_instances'][wid]['sqlstreams']
             for ssinfo in winfo['sqlstreams']:
-                ssdefs.append( { 'port' : ssinfo['conf']['port'],
-                                 'sqlt_vars' : { 'inp_queue' : ssinfo['conf']['inp_queue'] } } )
+                ssdefs.append( { 'port'      : ssinfo['conf']['port'],
+                                 'sqlt_vars' : ssinfo['conf']['sqlt_vars'] } )
 
         print json.dumps(conf)
 
@@ -290,53 +290,28 @@ class AppControllerService(ServiceProcess):
         """
         An op unit has started and reported in. It has no running SQLStream instances at
         this time.
-        When we receive this message, if we have a queue waiting to be consumed,
-        we tell it to start a SQLStream that will read from that queue.
+
+        TODO: do away with this, just replace it with a full agent status update
         """
         log.info("Op Unit reporting ready " + content.__str__())
         if self.workers.has_key(content['id']):
             log.error("Duplicate worker ID just reported in")
 
-        self.workers[content['id']] = {'cores':content['cores'],
-                                       'sqlstreams':{}}
+        if not self.workers.has_key(content['id']):
+            self.workers[content['id']] = {}
+
+        self.workers[content['id']].update({'metrics':content['metrics'], 
+                                            'sqlstreams':{}})
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
-
-        queue_name = None
-        if len(self.unboundqueues):
-            queue_name = self.unboundqueues.pop()
-
-        if queue_name != None:
-            yield self._start_sqlstream(content['id'], queue_name)
-            # processing continues when agent reports sqlstream is launched/configured/initialized
-        else:
-            log.info("Op Unit reported ready but no queue for it to work with")
-
-        # if we did not find a queue_name from the unboundqueues, it's ok, it'll just be
-        # in the list used by request_sqlstream
 
     @defer.inlineCallbacks
     def _start_sqlstream(self, worker_id, conf):
         """
         Tells an op unit to start a SQLStream instance.
-        TODO: Replace this when provisioner can handle reconfigure.
         """
 
         yield self.rpc_send(worker_id, 'start_sqlstream', conf)
-
-    @defer.inlineCallbacks
-    def _OLD_start_sqlstream(self, id, queue_name):
-        """
-        Tells an op unit with the given id to start a SQLStream instance.
-        """
-
-        params = {'queue_name':queue_name,
-                  'sql_defs':self._get_sql_def(inp_queue=queue_name, 
-                                               inp_exchange=EXCHANGE_NAME, 
-                                               det_topic=DETECTION_TOPIC, 
-                                               det_exchange=EXCHANGE_NAME) }
-
-        yield self.rpc_send(id, 'start_sqlstream', params)
 
     def _get_sql_def(self, **kwargs):
         """
@@ -534,7 +509,7 @@ class AppAgent(Process):
         Declares to the app controller that this op unit is ready. This indicates a freshly
         started op unit with no running SQLStream instances.
         """
-        (content, headers, msg) = yield self.send_controller_rpc('opunit_ready', id=self.id.full, cores=2)
+        (content, headers, msg) = yield self.send_controller_rpc('opunit_ready', id=self.id.full, metrics=self.metrics)
         defer.returnValue(str(content))
 
     @defer.inlineCallbacks
@@ -547,7 +522,8 @@ class AppAgent(Process):
         log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
 
         port = content['port']
-        defs = self._get_sql_defs(content)  # TODO : UPDATE
+        sqlt_vars = content['sqlt_vars']
+        defs = self._get_sql_defs(sqlt_vars)
 
         self.start_sqlstream(port, content['inp_queue'], defs)
 
@@ -570,11 +546,15 @@ class AppAgent(Process):
 
         log.debug("Starting SQLStream")
 
-        sspp = SSServerProcessProtocol(self, self._sqlstream_ended, ready_callback=self._sqlstream_started, sqlstreamid=ssid)
-        processname = SSD_BIN
-        theargs = [processname]
+        # TODO: when we learn how to do this, we can fix it
+        if len(self.sqlstreams) > 1:
+            log.error("Cannot currently start more than one SQLStream")
+        else:
+            sspp = SSServerProcessProtocol(self, self._sqlstream_ended, ready_callback=self._sqlstream_started, sqlstreamid=ssid)
+            processname = SSD_BIN
+            theargs = [processname]
 
-        self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
+            self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
 
     #@defer.inlineCallbacks
     def _sqlstream_ended(self, exitcode, outlines, errlines, **kwargs):
@@ -584,6 +564,8 @@ class AppAgent(Process):
         ssid = kwargs.get('sqlstreamid')
         log.debug("SQLStream (%s) has ended" % ssid)
         self.sqlstreams[ssid].pop('serverproc', None)
+
+        # TODO: update appcontroller
 
         #defer.returnValue(None)
 
