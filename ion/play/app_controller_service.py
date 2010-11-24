@@ -27,6 +27,12 @@ import zlib
 import base64
 
 try:
+    import multiprocessing  # python 2.6 only
+    NO_MULTIPROCESSING = False
+except:
+    NO_MULTIPROCESSING = True
+
+try:
     import json
 except:
     import simplejson as json
@@ -504,20 +510,21 @@ class AppAgent(Process):
         """
         Gets the number of processors/cores on the current system.
         Adapted from http://codeliberates.blogspot.com/2008/05/detecting-cpuscores-in-python.html
-
-        TODO: use multiprocessing.cpu_count() if python 2.6 is supported
         """
-        if hasattr(os, "sysconf"):
-            if os.sysconf_names.has_key("SC_NPROCESSORS_ONLN"):
-                # linux + unix
-                ncpus = os.sysconf("SC_NPROCESSORS_ONLN")
-                if isinstance(ncpus, int) and ncpus > 0:
-                    return ncpus
-            else:
-                # osx
-                return int(os.popen2("sysctl -n hw.ncpu")[1].read())
+        if NO_MULTIPROCESSING:
+            if hasattr(os, "sysconf"):
+                if os.sysconf_names.has_key("SC_NPROCESSORS_ONLN"):
+                    # linux + unix
+                    ncpus = os.sysconf("SC_NPROCESSORS_ONLN")
+                    if isinstance(ncpus, int) and ncpus > 0:
+                        return ncpus
+                else:
+                    # osx
+                    return int(os.popen2("sysctl -n hw.ncpu")[1].read())
 
-        return 1
+            return 1
+        else:
+            return multiprocessing.cpu_count()
 
     @defer.inlineCallbacks
     def opunit_ready(self):
