@@ -436,10 +436,17 @@ class AppAgent(Process):
     instructions.
     """
 
+    def __init__(self):
+        """
+        Constructor.
+        Gathers information about the system this agent is running on.
+        """
+        self.metrics = { 'cores' : self._get_cores() }
+        self.sqlstreams = {}
+
     #@defer.inlineCallbacks
     def plc_init(self):
         self.target = self.get_scoped_name('system', "app_controller")
-        self.sqlstreams = {}
 
         # check spawn args for sqlstreams, start them up as appropriate
         # expect a stringify'd python array of dicts
@@ -492,6 +499,25 @@ class AppAgent(Process):
 
         template = string.Template(defs)
         return template.substitute(conf)
+
+    def _get_cores(self):
+        """
+        Gets the number of processors/cores on the current system.
+        Adapted from http://codeliberates.blogspot.com/2008/05/detecting-cpuscores-in-python.html
+
+        TODO: use multiprocessing.cpu_count() if python 2.6 is supported
+        """
+        if hasattr(os, "sysconf"):
+            if os.sysconf_names.has_key("SC_NPROCESSORS_ONLN"):
+                # linux + unix
+                ncpus = os.sysconf("SC_NPROCESSORS_ONLN")
+                if isinstance(ncpus, int) and ncpus > 0:
+                    return ncpus
+            else:
+                # osx
+                return int(os.popen2("sysctl -n hw.ncpu")[1].read())
+
+        return 1
 
     @defer.inlineCallbacks
     def opunit_ready(self):
