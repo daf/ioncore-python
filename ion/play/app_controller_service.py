@@ -448,11 +448,12 @@ class AppAgent(Process):
         dl = []
         for sinfo in self.sqlstreams.values():
             if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
-                dl.append(sinfo['serverproc'].close())
+                dl.append(sinfo['serverproc'].close(timeout=120))   # needs a high timeout, takes a while to close!
         
         deflist = defer.DeferredList(dl)
         yield deflist
 
+    @defer.inlineCallbacks
     def kill_sqlstream_clients(self):
         dl = []
         for sinfo in self.sqlstreams.values():
@@ -545,18 +546,18 @@ class AppAgent(Process):
         if len(self.sqlstreams) > 1:
             log.error("Cannot currently start more than one SQLStream")
         else:
-            sspp = SSServerProcessProtocol(self, ready_callback=self._sqlstream_started)
+            sspp = SSServerProcessProtocol(self, ready_callback=self._sqlstream_started, ready_callbackargs={'sqlstreamid':ssid})
             sspp.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
 
             sspp.spawn()
             self.sqlstreams[ssid]['serverproc'] = sspp
 
     #@defer.inlineCallbacks
-    def _sqlstream_ended(self, exitcode, outlines, errlines, **kwargs):
+    def _sqlstream_ended(self, result, *args):
         """
         SQLStream daemon has ended.
         """
-        ssid = kwargs.get('sqlstreamid')
+        ssid = args[0].get('sqlstreamid')
         log.debug("SQLStream (%s) has ended" % ssid)
         self.sqlstreams[ssid].pop('serverproc', None)
 
@@ -578,25 +579,25 @@ class AppAgent(Process):
         """
         Spawns a SQLStream client to load the definitions of seismic app into the SQLStream instance.
         """
-        sspp = SSClientProcessProtocol(self)
-        sspp.addCallback(self._sqlstream_defs_loaded, sqlcommands=self.sqlstreams[ssid]['sql_defs'], sqlstreamid=ssid)
+        sspp = SSClientProcessProtocol(self, sqlcommands=self.sqlstreams[ssid]['sql_defs'])
+        sspp.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
 
         sspp.spawn()
         self.sqlstreams[ssid]['proc'] = sspp
 
     #@defer.inlineCallbacks
-    def _sqlstream_defs_loaded(self, exitcode, outlines, errlines, **kwargs):
+    def _sqlstream_defs_loaded(self, result, *args):
         """
         SQLStream defs have finished loading.
         Begins starting pumps.
         """
-        ssid = kwargs.get('sqlstreamid')
+        ssid = args[0].get('sqlstreamid')
         log.debug("SQLStream server (%s) has loaded defs" % ssid)
 
         # remove ref to proc
         self.sqlstreams[ssid].pop('proc', None)
 
-        if exitcode == 0:
+        if result['exitcode'] == 0:
             self.sqlstreams[ssid]['state'] = 'stopped'
             self.pumps_on(ssid)
         else:
@@ -633,22 +634,22 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        sspp = SSClientProcessProtocol(self)
-        sspp.addCallback(self._pumps_on_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
+        sspp = SSClientProcessProtocol(self, sqlcommands=sql_cmd)
+        sspp.addCallback(self._pumps_on_callback, sqlstreamid=sqlstreamid)
         
         sspp.spawn()
         self.sqlstreams[sqlstreamid]['proc'] = sspp
 
     @defer.inlineCallbacks
-    def _pumps_on_callback(self, exitcode, outlines, errlines, **kwargs):
-        log.debug("CALLBACK for pumps on: %d, %s" % (exitcode,"\n".join(outlines)))
+    def _pumps_on_callback(self, result, *args):
+        log.debug("CALLBACK for pumps on: %d" % result['exitcode'])
         
-        sqlstreamid = kwargs['sqlstreamid']
+        sqlstreamid = args[0].get('sqlstreamid')
 
         # remove ref to proc
         self.sqlstreams[sqlstreamid].pop('proc', None)
 
-        if exitcode == 0:
+        if result['exitcode'] == 0:
             self.sqlstreams[sqlstreamid]['state'] = 'running'
 
             # call app controller to let it know status
@@ -672,22 +673,22 @@ class AppAgent(Process):
                   """
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        sspp = SSClientProcessProtocol(self)
-        sspp.addCallback(self._pumps_off_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
+        sspp = SSClientProcessProtocol(self, sqlcommands=sql_cmd)
+        sspp.addCallback(self._pumps_off_callback, sqlstreamid=sqlstreamid)
 
         sspp.spawn()
         self.sqlstreams[sqlstreamid]['proc'] = sspp
     
     @defer.inlineCallbacks
-    def _pumps_off_callback(self, exitcode, outlines, errlines, **kwargs):
-        log.debug("CALLBACK 2 for pumps OFF: %d, %s" % (exitcode, "\n".join(outlines)))
+    def _pumps_off_callback(self, result, *args):
+        log.debug("CALLBACK 2 for pumps OFF: %d" % result['exitcode'])
 
-        sqlstreamid = kwargs['sqlstreamid']
+        sqlstreamid = args[0].get('sqlstreamid')
 
         # remove ref to proc
         self.sqlstreams[sqlstreamid].pop('proc', None)
         
-        if exitcode == 0:
+        if result['exitcode'] == 0:
             self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
             # let app controller know status
@@ -816,9 +817,9 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         You may call this method any time.
 
         @param  callback    Method to be called when the process exits. This callback should
-                            take a single argument, which will be a dict containing the status
-                            of the process (exitcode, outlines, errlines) and the callbackargs
-                            specified to this method.
+                            take two arguments, a dict named result containing the status
+                            of the process (exitcode, outlines, errlines) and then a *args param
+                            for the callback args specified to this method.
 
                             This callback will be executed for any reason that the process
                             ends - whether it ended on its own, ended as a result of close, or
@@ -844,7 +845,7 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         """
 
         def anon_timeout():
-            self.close_impl(True)
+            self._close_impl(True)
 
         # we have to save this so we can cancel the timeout in processEnded
         self.close_timeout = reactor.callLater(timeout, anon_timeout)
@@ -860,10 +861,10 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         """
         if force:
             self.transport.loseConnection()
-            self.signalProcess("KILL")
+            self.transport.signalProcess("KILL")
         else:
             self.transport.closeStdin()
-            self.signalProcess("TERM")
+            self.transport.signalProcess("TERM")
 
     def connectionMade(self):
         log.debug("SSProcessProtocol: process started")
@@ -883,7 +884,7 @@ class SSProcessProtocol(protocol.ProcessProtocol):
 
         # if this was called as a result of a close() call, we need to cancel the timeout so
         # it won't try to kill again
-        if self.close_timeout != None:
+        if self.close_timeout != None and self.close_timeout.active():
             self.close_timeout.cancel()
 
         # form a dict of status to be passed as the result
@@ -936,6 +937,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
         @param ready_callback   Callback that is called when the server reports it is ready. That callback gets any additional kwargs passed here.
         """
         self.ready_callback = kwargs.pop('ready_callback', None)
+        self.ready_callbackargs = kwargs.pop('ready_callbackargs', {})
         SSProcessProtocol.__init__(self, app_agent, **kwargs)
 
         self.binary = SSD_BIN
@@ -947,7 +949,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
         """
         if force:
             self.transport.signalProcess("INT") # sends ctrl-c which should abort sqlstreamd
-            self.loseConnection()
+            self.transport.loseConnection()
         else:
             self.transport.write('!quit\n') 
 
@@ -955,7 +957,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
     def outReceived(self, data):
         SSProcessProtocol.outReceived(self, data)
         if (SSD_READY_STRING in data):
-            yield self.ready_callback(**self.callbackargs)
+            yield self.ready_callback(**self.ready_callbackargs)
  
 
 # Spawn of the process using the module name
