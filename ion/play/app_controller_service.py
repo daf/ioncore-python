@@ -443,7 +443,6 @@ class AppAgent(Process):
 
                 self.start_sqlstream(port, inp_queue, defs)
 
-    @defer.inlineCallbacks
     def kill_sqlstreams(self):
         dl = []
         for sinfo in self.sqlstreams.values():
@@ -451,9 +450,8 @@ class AppAgent(Process):
                 dl.append(sinfo['serverproc'].close(timeout=120))   # needs a high timeout, takes a while to close!
         
         deflist = defer.DeferredList(dl)
-        yield deflist
+        return deflist
 
-    @defer.inlineCallbacks
     def kill_sqlstream_clients(self):
         dl = []
         for sinfo in self.sqlstreams.values():
@@ -461,7 +459,7 @@ class AppAgent(Process):
                 dl.append(sinfo['proc'].close())
 
         deflist = defer.DeferredList(dl)
-        yield deflist
+        return deflist
 
     def _get_sql_defs(self, sqldefs, uconf, **kwargs):
         """
