@@ -417,12 +417,12 @@ class AppAgent(Process):
     instructions.
     """
 
-    def __init__(self):
+    def __init__(self, receiver=None, spawnargs=None, **kwargs):
         """
         Constructor.
         Gathers information about the system this agent is running on.
         """
-        Process.__init__(self)
+        Process.__init__(self, receiver=receiver, spawnargs=spawnargs, **kwargs)
 
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
