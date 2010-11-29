@@ -794,12 +794,15 @@ class SSProcessProtocol(protocol.ProcessProtocol):
                     may never terminate! Use the close method to safely close a
                     process. You may yield on the deferred returned by that.
         """
+        if self.used:
+            raise RuntimeError("Already used this process protocol")
+
         if binary == None:
             binary = self.binary
 
         if binary == None:
             log.error("No binary specified")
-            raise ValueError("No binary specified")     # TODO: not this type
+            raise RuntimeError("No binary specified")
 
         theargs = [binary]
         theargs.extend(args)
