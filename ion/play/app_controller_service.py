@@ -443,6 +443,16 @@ class AppAgent(Process):
 
                 self.start_sqlstream(port, inp_queue, defs)
 
+    @defer.inlineCallbacks
+    def plc_terminate(self):
+        """
+        Termination of this App Agent process.
+        Attempts to shut down sqlstream clients and sqlstream daemon instances cleanly. If
+        they exceed a timeout, they are shut down forcefully.
+        """
+        yield self.kill_sqlstream_clients()  # kill clients first, they prevent sqlstream daemons from shutting down
+        yield self.kill_sqlstreams()
+
     def kill_sqlstreams(self):
         dl = []
         for sinfo in self.sqlstreams.values():
