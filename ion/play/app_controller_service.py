@@ -21,6 +21,7 @@ from ion.core.process.service_process import ServiceProcess, ServiceClient
 from ion.core.messaging import messaging
 from ion.core.messaging.receiver import Receiver
 from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
+from ion.services.cei.epu_reconfigure import EPUControllerClient
 
 import uuid
 import zlib
@@ -99,6 +100,8 @@ class AppControllerService(ServiceProcess):
         #yield self.all_data_recv.attach()
         #yield self.all_data_recv.initialize()
         #self.counter = 0
+
+        self.epu_controller_client = EPUControllerClient()
 
     @defer.inlineCallbacks
     def _recv_announce(self, data, msg):
@@ -264,9 +267,8 @@ class AppControllerService(ServiceProcess):
 
         print json.dumps(conf)
 
-        # TODO: actually request
-        defer.returnValue(None)
-         
+        yield self.epu_controller_client.reconfigure(conf)
+
     @defer.inlineCallbacks
     def _recv_data(self, data, msg):
         #log.info("<-- data packet" + msg.headers.__str__())
