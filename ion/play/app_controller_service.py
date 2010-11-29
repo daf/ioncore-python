@@ -443,29 +443,24 @@ class AppAgent(Process):
 
                 self.start_sqlstream(port, inp_queue, defs)
 
+    @defer.inlineCallbacks
     def kill_sqlstreams(self):
+        dl = []
         for sinfo in self.sqlstreams.values():
             if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
-                if sinfo.has_key("serverproc_shutdown"):
-                    cmd = "!kill"
-                else:
-                    cmd = "!quit"
-
-                sinfo['serverproc'].write('%s\n' % cmd)
-                sinfo['serverproc_shutdown'] = True         # flag to indicate we've tried before
+                dl.append(sinfo['serverproc'].close())
+        
+        deflist = defer.DeferredList(dl)
+        yield deflist
 
     def kill_sqlstream_clients(self):
+        dl = []
         for sinfo in self.sqlstreams.values():
             if sinfo.has_key('proc') and sinfo['proc'] != None:
-                if sinfo.has_key('proc_shutdown'):
-                    sinfo['proc'].signalProcess('KILL')
-                    sinfo['proc'].loseConnection()
-                    sinfo.pop('proc_shutdown', None)
-                    sinfo.pop('proc', None)
-                else:
-                    sinfo['proc'].closeStdin()
-                    sinfo['proc'].signalProcess('TERM')
-                    sinfo['proc_shutdown'] = True
+                dl.append(sinfo['proc'].close())
+
+        deflist = defer.DeferredList(dl)
+        yield deflist
 
     def _get_sql_defs(self, sqldefs, uconf, **kwargs):
         """
@@ -550,11 +545,11 @@ class AppAgent(Process):
         if len(self.sqlstreams) > 1:
             log.error("Cannot currently start more than one SQLStream")
         else:
-            sspp = SSServerProcessProtocol(self, self._sqlstream_ended, ready_callback=self._sqlstream_started, sqlstreamid=ssid)
-            processname = SSD_BIN
-            theargs = [processname]
+            sspp = SSServerProcessProtocol(self, ready_callback=self._sqlstream_started)
+            sspp.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
 
-            self.sqlstreams[ssid]['serverproc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
+            sspp.spawn()
+            self.sqlstreams[ssid]['serverproc'] = sspp
 
     #@defer.inlineCallbacks
     def _sqlstream_ended(self, exitcode, outlines, errlines, **kwargs):
@@ -583,11 +578,11 @@ class AppAgent(Process):
         """
         Spawns a SQLStream client to load the definitions of seismic app into the SQLStream instance.
         """
-        sspp = SSClientProcessProtocol(self, self._sqlstream_defs_loaded, sqlcommands=self.sqlstreams[ssid]['sql_defs'], sqlstreamid=ssid)
-        processname = SSC_BIN
-        theargs = [processname]
+        sspp = SSClientProcessProtocol(self)
+        sspp.addCallback(self._sqlstream_defs_loaded, sqlcommands=self.sqlstreams[ssid]['sql_defs'], sqlstreamid=ssid)
 
-        self.sqlstreams[ssid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
+        sspp.spawn()
+        self.sqlstreams[ssid]['proc'] = sspp
 
     #@defer.inlineCallbacks
     def _sqlstream_defs_loaded(self, exitcode, outlines, errlines, **kwargs):
@@ -638,14 +633,11 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        # TODO: execute sqllineClient and pipe the above into it
-
-        # TODO: everything below here is fake and will be removed
-        sspp = SSClientProcessProtocol(self, self._pumps_on_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
-        processname = SSC_BIN
-        theargs = [processname]
-
-        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
+        sspp = SSClientProcessProtocol(self)
+        sspp.addCallback(self._pumps_on_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
+        
+        sspp.spawn()
+        self.sqlstreams[sqlstreamid]['proc'] = sspp
 
     @defer.inlineCallbacks
     def _pumps_on_callback(self, exitcode, outlines, errlines, **kwargs):
@@ -678,19 +670,13 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" STOP;
                   ALTER PUMP "DetectionMessagesPump" STOP;
                   """
-        # TODO: execute sqllineClient and pipe the above into it
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        sspp = SSClientProcessProtocol(self, self._pumps_off_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
-        processname = SSC_BIN
-        theargs = [processname]
+        sspp = SSClientProcessProtocol(self)
+        sspp.addCallback(self._pumps_off_callback, sqlcommands=sql_cmd, sqlstreamid=sqlstreamid)
 
-        self.sqlstreams[sqlstreamid]['proc'] = reactor.spawnProcess(sspp, processname, args=theargs, env=None)
-
-
-        # TODO: everyhting below here is fake and will be removed
-        #if self.sqlstreams[sqlstreamid].has_key('proc'):
-        #    self.sqlstreams[sqlstreamid]['proc'].transport.signalProcess('KILL')
+        sspp.spawn()
+        self.sqlstreams[sqlstreamid]['proc'] = sspp
     
     @defer.inlineCallbacks
     def _pumps_off_callback(self, exitcode, outlines, errlines, **kwargs):
@@ -781,22 +767,103 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     """
     TODO: Class for connecting to SQLStream through Twisted
     """
-    def __init__(self, app_agent, callback, **kwargs):
+    def __init__(self, app_agent, **kwargs):
         """
         Initializes a process protocol for a SQLStream client or server.
 
         @param app_agent    The application agent that is running this SQLStream client command.
-        @param callback     The method of application agent to call when the client finishes.
 
         Additional parameters specified through keyword arguments are passed back to the
         callback method as keyword arguments.
         """
         self.app_agent = app_agent
-        self.callback = callback
-        self.callbackargs = kwargs
 
         self.errlines = []
         self.outlines = []
+
+        self.binary = None      # binary to run; set this in a derived class
+        self.deferred_exited = defer.Deferred()   # is called back on process end
+        self.used = False       # do not allow anyone to use again
+        self.close_timeout = None
+
+    def spawn(self, binary=None, args=[]):
+        """
+        Spawns an OS process via twisted's reactor.
+
+        @returns    A deferred that is called back on process ending.
+                    WARNING: it is not safe to yield on this deferred as the process
+                    may never terminate! Use the close method to safely close a
+                    process. You may yield on the deferred returned by that.
+        """
+        if binary == None:
+            binary = self.binary
+
+        if binary == None:
+            log.error("No binary specified")
+            raise ValueError("No binary specified")     # TODO: not this type
+
+        theargs = [binary]
+        theargs.extend(args)
+
+        reactor.spawnProcess(self, binary, theargs, env=None)
+        self.used = True
+
+        return self.deferred_exited
+
+    def addCallback(self, callback, **kwargs):
+        """
+        Adds a callback to be called when the process exits.
+        You may call this method any time.
+
+        @param  callback    Method to be called when the process exits. This callback should
+                            take a single argument, which will be a dict containing the status
+                            of the process (exitcode, outlines, errlines) and the callbackargs
+                            specified to this method.
+
+                            This callback will be executed for any reason that the process
+                            ends - whether it ended on its own, ended as a result of close, or
+                            was killed abnormally. It is your responsibility to handle all these
+                            cases.
+
+        @param  **kwargs    Additional arguments to return to the callback.
+        """
+        self.deferred_exited.addCallback(callback, kwargs)
+
+    def close(self, force=False, timeout=5):
+        """
+        Instructs the opened process to close down.
+
+        @param force    If true, it severs all pipes and sends a KILL signal.
+                        At this point, twisted essentially forgets about the
+                        process.
+
+        @param timeout  The amount of time allowed by the process to signal it has
+                        closed. Default is 5 seconds. If the process does not shut down
+                        within this time, close is called again with the force param
+                        set to True.
+        """
+
+        def anon_timeout():
+            self.close_impl(True)
+
+        # we have to save this so we can cancel the timeout in processEnded
+        self.close_timeout = reactor.callLater(timeout, anon_timeout)
+        self._close_impl(force)
+
+        # with the timeout in place, the processEnded will always be called, so its safe
+        # to yield on this deferred now
+        return self.deferred_exited
+
+    def _close_impl(self, force):
+        """
+        Default implementation of close. Override this in your derived class.
+        """
+        if force:
+            self.transport.loseConnection()
+            self.signalProcess("KILL")
+        else:
+            self.transport.closeStdin()
+            self.signalProcess("TERM")
 
     def connectionMade(self):
         log.debug("SSProcessProtocol: process started")
@@ -807,12 +874,24 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     def errReceived(self, data):
         self.errlines.append(data)
 
-    @defer.inlineCallbacks
+    #@defer.inlineCallbacks
     def processEnded(self, reason):
         log.debug("SSProcessProtocol: process ended (exitcode: %d)" % reason.value.exitCode)
 
         # call method in App Agent we set up when constructing
-        yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
+        #yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
+
+        # if this was called as a result of a close() call, we need to cancel the timeout so
+        # it won't try to kill again
+        if self.close_timeout != None:
+            self.close_timeout.cancel()
+
+        # form a dict of status to be passed as the result
+        cba = { 'exitcode' : reason.value.exitCode,
+                'outlines' : self.outlines,
+                'errlines' : self.errlines }
+
+        self.deferred_exited.callback(cba)
 
 #
 #
@@ -826,12 +905,14 @@ class SSClientProcessProtocol(SSProcessProtocol):
     Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
     it will execute the commands upon launching the client process.
     """
-    def __init__(self, app_agent, callback, **kwargs):
+    def __init__(self, app_agent, **kwargs):
         """
         @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
         """
         self.sqlcommands = kwargs.pop('sqlcommands', None)
-        SSProcessProtocol.__init__(self, app_agent, callback, **kwargs)
+        SSProcessProtocol.__init__(self, app_agent, **kwargs)
+
+        self.binary = SSC_BIN
 
     def connectionMade(self):
         SSProcessProtocol.connectionMade(self)
@@ -850,12 +931,25 @@ class SSClientProcessProtocol(SSProcessProtocol):
 #
 
 class SSServerProcessProtocol(SSProcessProtocol):
-    def __init__(self, app_agent, callback, **kwargs):
+    def __init__(self, app_agent, **kwargs):
         """
         @param ready_callback   Callback that is called when the server reports it is ready. That callback gets any additional kwargs passed here.
         """
         self.ready_callback = kwargs.pop('ready_callback', None)
-        SSProcessProtocol.__init__(self, app_agent, callback, **kwargs)
+        SSProcessProtocol.__init__(self, app_agent, **kwargs)
+
+        self.binary = SSD_BIN
+
+    def _close_impl(self, force=False):
+        """
+        Safely exit SQLstream daemon.
+        Make sure you use a long timeout when calling close, it takes a while.
+        """
+        if force:
+            self.transport.signalProcess("INT") # sends ctrl-c which should abort sqlstreamd
+            self.loseConnection()
+        else:
+            self.transport.write('!quit\n') 
 
     @defer.inlineCallbacks
     def outReceived(self, data):
