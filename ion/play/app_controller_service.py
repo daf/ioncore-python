@@ -6,8 +6,7 @@
 @brief Application Controller for load balancing
 """
 
-import os
-import string
+import os, string, tempfile
 
 from ion.core import ioninit
 
@@ -931,12 +930,19 @@ class SSClientProcessProtocol(SSProcessProtocol):
     def connectionMade(self):
         SSProcessProtocol.connectionMade(self)
 
-        # pump the contents of sqlcommands into stdin
         if self.sqlcommands != None:
+
+            # dump sqlcommands into a temporary file
+            f = tempfile.NamedTemporaryFile(delete=False)
+            f.write(self.sqlcommands)
+            f.close()
+
             try:
-                self.transport.write(self.sqlcommands.encode('ascii', 'ignore'))
+                self.transport.write("!run %s" % f.name)
             finally:
                 self.transport.closeStdin()
+
+        os.unlink(f.name)
 
 #
 #
