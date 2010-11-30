@@ -1,6 +1,6 @@
 !outputformat csv
 !set incremental on
-!set timeout 1000
+-- !set timeout 1000
 
 set schema 'UCSD';
 set path 'UCSD';
