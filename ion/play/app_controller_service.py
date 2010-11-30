@@ -925,7 +925,8 @@ class SSClientProcessProtocol(SSProcessProtocol):
         self.sqlcommands = kwargs.pop('sqlcommands', None)
         SSProcessProtocol.__init__(self, app_agent, **kwargs)
 
-        self.binary = SSC_BIN
+        self.binary     = SSC_BIN
+        self.temp_file  = None
 
     def connectionMade(self):
         SSProcessProtocol.connectionMade(self)
@@ -933,16 +934,21 @@ class SSClientProcessProtocol(SSProcessProtocol):
         if self.sqlcommands != None:
 
             # dump sqlcommands into a temporary file
-            f = tempfile.NamedTemporaryFile(delete=False)
+            f = tempfile.NamedTemporaryFile(delete=False)   # TODO: requires python 2.6
             f.write(self.sqlcommands)
             f.close()
 
+            self.temp_file = f.name
+
             try:
-                self.transport.write("!run %s" % f.name)
+                self.transport.write("!run %s" % self.temp_file)
             finally:
                 self.transport.closeStdin()
 
-        os.unlink(f.name)
+    def processEnded(self, reason):
+        SSProcessProtocol.processEnded(self, reason)
+        if self.temp_file != None:
+            os.unlink(self.temp_file)
 
 #
 #
