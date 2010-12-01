@@ -974,7 +974,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
 
         self.binary = SSD_BIN
 
-    def _close_impl(self, force=False):
+    def _close_impl(self, force):
         """
         Safely exit SQLstream daemon.
         Make sure you use a long timeout when calling close, it takes a while.
@@ -983,7 +983,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
             self.transport.signalProcess("INT") # sends ctrl-c which should abort sqlstreamd
             self.transport.loseConnection()
         else:
-            self.transport.write('!quit\n') 
+            self.transport.write('!kill\n')
 
     @defer.inlineCallbacks
     def outReceived(self, data):
