@@ -927,9 +927,15 @@ class SSClientProcessProtocol(SSProcessProtocol):
 
         self.binary     = SSC_BIN
         self.temp_file  = None
-
-    def connectionMade(self):
-        SSProcessProtocol.connectionMade(self)
+    
+    def spawn(self, binary=None, args=[]):
+        """
+        Spawns the sqllineClient process.
+        This override is to dump our sqlcommands into a file and tell sqllineClient to
+        run that file. We modify the args keyword arg and send it up to the baseclass
+        spawn implementation.
+        """
+        newargs = args
 
         if self.sqlcommands != None:
 
@@ -940,13 +946,14 @@ class SSClientProcessProtocol(SSProcessProtocol):
 
             self.temp_file = f.name
 
-            try:
-                self.transport.write("!run %s" % self.temp_file)
-            finally:
-                self.transport.closeStdin()
+            newargs.append("--run=%s" % self.temp_file)
+
+        SSProcessProtocol.spawn(self, binary, newargs)
 
     def processEnded(self, reason):
         SSProcessProtocol.processEnded(self, reason)
+
+        # remove temp file if we created one earlier
         if self.temp_file != None:
             os.unlink(self.temp_file)
 
