@@ -145,10 +145,7 @@ class AppControllerService(ServiceProcess):
 
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
-            try:
-                yield self.request_sqlstream(queue_name)
-            except Exception,e:
-                log.error("seomthing dyde %s" % str(e))
+            yield self.request_sqlstream(queue_name)
             
         self.routing[queue_name].append(station_name)
         
@@ -302,7 +299,7 @@ class AppControllerService(ServiceProcess):
             self.workers[content['id']] = {}
 
         self.workers[content['id']].update({'metrics':content['metrics'], 
-                                            'sqlstreams':{}})
+                                            'sqlstreams':[]})
 
         yield self.reply_ok(msg, {'value': 'ok'}, {})
 
@@ -432,6 +429,17 @@ class AppAgent(Process):
     def plc_init(self):
         self.target = self.get_scoped_name('system', "app_controller")
 
+        defs = self.spawn_args.get('sqldefs')   # SHOULD ALWAYS HAVE THIS IN SPAWN ARGS
+        if defs:
+            # uncompress defs
+            compdefs = base64.b64decode(defs)
+            uncompresseddefs = zlib.decompress(compdefs)
+
+            self._sqldefs = uncompresseddefs
+
+        # let service know we're up
+        #self.opunit_ready()
+
         # check spawn args for sqlstreams, start them up as appropriate
         # expect a stringify'd python array of dicts
         if self.spawn_args.has_key('sqlstreams'):
@@ -440,7 +448,7 @@ class AppAgent(Process):
             for ssinfo in sqlstreams:
                 port = ssinfo['port']
                 inp_queue = ssinfo['sqlt_vars']['inp_queue']
-                defs = self._get_sql_defs(self.spawn_args['sqldefs'], ssinfo['sqlt_vars'])
+                defs = self._get_sql_defs(uconf=ssinfo['sqlt_vars'])
 
                 self.start_sqlstream(port, inp_queue, defs)
 
@@ -472,7 +480,7 @@ class AppAgent(Process):
         deflist = defer.DeferredList(dl)
         return deflist
 
-    def _get_sql_defs(self, sqldefs, uconf, **kwargs):
+    def _get_sql_defs(self, sqldefs=None, uconf={}, **kwargs):
         """
         Returns a fully substituted SQLStream SQL definition string.
         Using keyword arguments, you can update the default params passed in to spawn args.
@@ -481,9 +489,9 @@ class AppAgent(Process):
         conf.update(uconf)
         conf.update(kwargs)
 
-        # uncompress defs
-        compdefs = base64.b64decode(sqldefs)
-        defs = zlib.decompress(compdefs)
+        defs = sqldefs
+        if defs == None:
+            defs = self._sqldefs
 
         template = string.Template(defs)
         return template.substitute(conf)
@@ -509,6 +517,7 @@ class AppAgent(Process):
             return multiprocessing.cpu_count()
 
     @defer.inlineCallbacks
+    # TODO: do away with this, do status only
     def opunit_ready(self):
         """
         Declares to the app controller that this op unit is ready. This indicates a freshly
@@ -528,9 +537,9 @@ class AppAgent(Process):
 
         port = content['port']
         sqlt_vars = content['sqlt_vars']
-        defs = self._get_sql_defs(sqlt_vars)
+        defs = self._get_sql_defs(uconf=sqlt_vars)
 
-        self.start_sqlstream(port, content['inp_queue'], defs)
+        self.start_sqlstream(port, sqlt_vars['inp_queue'], defs)
 
         yield self.reply_ok(msg, {'value':'ok'}, {})
 
