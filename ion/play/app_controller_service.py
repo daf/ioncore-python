@@ -1008,8 +1008,11 @@ class SSServerProcessProtocol(SSProcessProtocol):
         Safely exit SQLstream daemon.
         Make sure you use a long timeout when calling close, it takes a while.
         """
-        if force:
-            self.transport.signalProcess("INT") # sends ctrl-c which should abort sqlstreamd
+
+        # will do the quick shutdown if force, or if we never became ready
+        if force or not self.ready_deferred.called:
+            self.transport.signalProcess("KILL") # TODO: INT does not interrupt foreground process in a bash script!
+                                                 # need to get PID of java process so we can shut it down nicer than this!
             self.transport.loseConnection()
         else:
             self.transport.write('!kill\n')
