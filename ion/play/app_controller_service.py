@@ -777,9 +777,11 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     """
     TODO: Class for connecting to SQLStream through Twisted
     """
-    def __init__(self, **kwargs):
+    def __init__(self, spawnargs=[], **kwargs):
         """
         """
+
+        self.spawnargs = spawnargs
 
         self.errlines = []
         self.outlines = []
@@ -809,7 +811,12 @@ class SSProcessProtocol(protocol.ProcessProtocol):
             raise RuntimeError("No binary specified")
 
         theargs = [binary]
-        theargs.extend(args)
+
+        # arguments passed in here always take precedence.
+        if len(args) == 0:
+            theargs.extend(self.spawnargs)
+        else:
+            theargs.extend(args)
 
         reactor.spawnProcess(self, binary, theargs, env=None)
         self.used = True
@@ -911,12 +918,12 @@ class SSClientProcessProtocol(SSProcessProtocol):
     Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
     it will execute the commands upon launching the client process.
     """
-    def __init__(self, **kwargs):
+    def __init__(self, spawnargs=[], **kwargs):
         """
         @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
         """
         self.sqlcommands = kwargs.pop('sqlcommands', None)
-        SSProcessProtocol.__init__(self, **kwargs)
+        SSProcessProtocol.__init__(self, spawnargs, **kwargs)
 
         self.binary     = SSC_BIN
         self.temp_file  = None
@@ -957,13 +964,13 @@ class SSClientProcessProtocol(SSProcessProtocol):
 #
 
 class SSServerProcessProtocol(SSProcessProtocol):
-    def __init__(self, **kwargs):
+    def __init__(self, spawnargs, **kwargs):
         """
         @param ready_callback   Callback that is called when the server reports it is ready. That callback gets any additional kwargs passed here.
         """
         self.ready_callback = kwargs.pop('ready_callback', None)
         self.ready_callbackargs = kwargs.pop('ready_callbackargs', {})
-        SSProcessProtocol.__init__(self, **kwargs)
+        SSProcessProtocol.__init__(self, spawnargs, **kwargs)
 
         self.binary = SSD_BIN
 
