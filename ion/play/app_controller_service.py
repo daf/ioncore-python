@@ -1000,7 +1000,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
     callbacks to it using the addCallback method. This override is so it can be used in an
     OSProcessChain.
     """
-    def __init__(self, spawnargs, **kwargs):
+    def __init__(self, spawnargs=[], **kwargs):
         SSProcessProtocol.__init__(self, spawnargs, **kwargs)
         self.binary = SSD_BIN
         self.ready_deferred = defer.Deferred()
