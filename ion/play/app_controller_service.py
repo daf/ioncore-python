@@ -990,7 +990,86 @@ class SSServerProcessProtocol(SSProcessProtocol):
         SSProcessProtocol.outReceived(self, data)
         if (SSD_READY_STRING in data):
             yield self.ready_callback(**self.ready_callbackargs)
- 
+
+#
+#
+# ########################################################
+#
+#
+
+class OSProcessChain(defer.Deferred):
+    """
+    Used to set up a chain of SSProcessProtocols that run one after another.
+    If any of them error, the chain is aborted and the errback is raised.
+    """
+
+    def __init__(self, osprocs):
+        """
+        Constructor.
+
+        @param osprocs  Takes a list of SSProcessProtocols that will be spawned.
+        """
+        
+        defer.Deferred.__init__(self)
+        self.osprocs = osprocs
+
+        self._doneprocs = []
+        self._results   = []
+
+    def run(self):
+        """
+        Starts running the chain of processes.
+
+        @returns Itself, a deferred, that may be yielded on. Note this has no protection for
+                 processes which never terminate.
+        """
+        self._run_one()
+        return self
+
+    def _run_one(self):
+        """
+        Runs the next SSProcessProtocol.
+        """
+        if len(self.osprocs) == 0:
+            self._fire(True)
+            return
+
+        proc = self.osprocs.pop(0)
+        self._doneprocs.append(proc)
+
+        pd = proc.spawn()
+        pd.addCallback(self._proc_cb)
+        pd.addErrback(self._proc_eb)
+
+    def _proc_cb(self, result):
+        """
+        Callback on single SSProcessProtocol success.
+        """
+        self._results.append(result)
+        self._run_one()
+
+    def _proc_eb(self, failure):
+        """
+        Errback on single SSProcessProtocol failure.
+        """
+        failure.trap(StandardError)
+        self._results.append(failure.value)
+        self._fire(False)
+
+    def _fire(self, success):
+        """
+        Calls the process chain's callback or errback as per the success parameter.
+        This method builds the proc/result list to pass back through either mechanism.
+        """
+        # build doneprocs/results, expand to take unfinished procs (indicated with None results)
+        self._doneprocs.extend(self.osprocs)
+        self._results.extend([None for x in range(len(self.osprocs))])
+        
+        res = zip(self._doneprocs, self._results)
+        if success:
+            self.callback(res)
+        else:
+            self.errback(StandardError(res))
 
 # Spawn of the process using the module name
 factory = ProcessFactory(AppControllerService)
