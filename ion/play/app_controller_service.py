@@ -555,7 +555,7 @@ class AppAgent(Process):
         if len(self.sqlstreams) > 1:
             log.error("Cannot currently start more than one SQLStream")
         else:
-            sspp = SSServerProcessProtocol(self, ready_callback=self._sqlstream_started, ready_callbackargs={'sqlstreamid':ssid})
+            sspp = SSServerProcessProtocol(ready_callback=self._sqlstream_started, ready_callbackargs={'sqlstreamid':ssid})
             sspp.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
 
             sspp.spawn()
@@ -588,7 +588,7 @@ class AppAgent(Process):
         """
         Spawns a SQLStream client to load the definitions of seismic app into the SQLStream instance.
         """
-        sspp = SSClientProcessProtocol(self, sqlcommands=self.sqlstreams[ssid]['sql_defs'])
+        sspp = SSClientProcessProtocol(sqlcommands=self.sqlstreams[ssid]['sql_defs'])
         sspp.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
 
         sspp.spawn()
@@ -643,7 +643,7 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        sspp = SSClientProcessProtocol(self, sqlcommands=sql_cmd)
+        sspp = SSClientProcessProtocol(sqlcommands=sql_cmd)
         sspp.addCallback(self._pumps_on_callback, sqlstreamid=sqlstreamid)
         
         sspp.spawn()
@@ -682,7 +682,7 @@ class AppAgent(Process):
                   """
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        sspp = SSClientProcessProtocol(self, sqlcommands=sql_cmd)
+        sspp = SSClientProcessProtocol(sqlcommands=sql_cmd)
         sspp.addCallback(self._pumps_off_callback, sqlstreamid=sqlstreamid)
 
         sspp.spawn()
@@ -777,16 +777,9 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     """
     TODO: Class for connecting to SQLStream through Twisted
     """
-    def __init__(self, app_agent, **kwargs):
+    def __init__(self, **kwargs):
         """
-        Initializes a process protocol for a SQLStream client or server.
-
-        @param app_agent    The application agent that is running this SQLStream client command.
-
-        Additional parameters specified through keyword arguments are passed back to the
-        callback method as keyword arguments.
         """
-        self.app_agent = app_agent
 
         self.errlines = []
         self.outlines = []
@@ -918,12 +911,12 @@ class SSClientProcessProtocol(SSProcessProtocol):
     Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
     it will execute the commands upon launching the client process.
     """
-    def __init__(self, app_agent, **kwargs):
+    def __init__(self, **kwargs):
         """
         @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
         """
         self.sqlcommands = kwargs.pop('sqlcommands', None)
-        SSProcessProtocol.__init__(self, app_agent, **kwargs)
+        SSProcessProtocol.__init__(self, **kwargs)
 
         self.binary     = SSC_BIN
         self.temp_file  = None
@@ -964,13 +957,13 @@ class SSClientProcessProtocol(SSProcessProtocol):
 #
 
 class SSServerProcessProtocol(SSProcessProtocol):
-    def __init__(self, app_agent, **kwargs):
+    def __init__(self, **kwargs):
         """
         @param ready_callback   Callback that is called when the server reports it is ready. That callback gets any additional kwargs passed here.
         """
         self.ready_callback = kwargs.pop('ready_callback', None)
         self.ready_callbackargs = kwargs.pop('ready_callbackargs', {})
-        SSProcessProtocol.__init__(self, app_agent, **kwargs)
+        SSProcessProtocol.__init__(self, **kwargs)
 
         self.binary = SSD_BIN
 
