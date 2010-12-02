@@ -466,8 +466,8 @@ class AppAgent(Process):
     def kill_sqlstream_clients(self):
         dl = []
         for sinfo in self.sqlstreams.values():
-            if sinfo.has_key('proc') and sinfo['proc'] != None:
-                dl.append(sinfo['proc'].close())
+            if sinfo.has_key('procchain') and sinfo['procchain'] != None:
+                dl.append(sinfo['procchain'].close())
 
         deflist = defer.DeferredList(dl)
         return deflist
@@ -577,6 +577,7 @@ class AppAgent(Process):
         chain = OSProcessChain([proc_server, proc_loaddefs, proc_pumpson])
         chain.addCallback(self._sqlstream_start_chain_success, sqlstreamid=ssid)
         chain.addErrback(self._sqlstream_start_chain_failure, sqlstreamid=ssid)
+        self.sqlstreams[ssid]['procchain'] = chain
         return chain.run()
 
     def _sqlstream_start_chain_success(self, result, **kwargs):
@@ -610,17 +611,6 @@ class AppAgent(Process):
         """
         ssid = kwargs.get('sqlstreamid')
         log.debug("SQLStream server (%s) has started" % ssid)
-        #self._load_sqlstream_defs(ssid)
-
-    def _load_sqlstream_defs(self, ssid):
-        """
-        Spawns a SQLStream client to load the definitions of seismic app into the SQLStream instance.
-        """
-        sspp = SSClientProcessProtocol(sqlcommands=self.sqlstreams[ssid]['sql_defs'])
-        sspp.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
-
-        sspp.spawn()
-        self.sqlstreams[ssid]['proc'] = sspp
 
     #@defer.inlineCallbacks
     def _sqlstream_defs_loaded(self, result, *args):
@@ -744,16 +734,6 @@ class AppAgent(Process):
         ret = yield self.rpc_send(self.target, operation, content, {}, **kwargs)
         defer.returnValue(ret)
 
-    def __del__(self):
-        """
-        Destructor - kills any running consumers cleanly.
-        TODO: this is temporary, only works with drain script. Replace with real comms to
-        SQLStream.
-        """
-        #for (sqlstreamid, info) in self.sqlstreams:
-        #    if info.has_key('state') and info['state'] == 'running':
-        #        if info.has_key['proc']:
-        #            info['proc'].transport.signalProcess('KILL')
 #
 #
 # ########################################################
@@ -1072,6 +1052,7 @@ class OSProcessChain(defer.Deferred):
 
         self._doneprocs = []
         self._results   = []
+        self._started   = False
 
     def run(self):
         """
@@ -1080,6 +1061,7 @@ class OSProcessChain(defer.Deferred):
         @returns Itself, a deferred, that may be yielded on. Note this has no protection for
                  processes which never terminate.
         """
+        self._running = True
         self._run_one()
         return self
 
@@ -1087,7 +1069,10 @@ class OSProcessChain(defer.Deferred):
         """
         Runs the next SSProcessProtocol.
         """
-        if len(self.osprocs) == 0:
+
+        # if we have no more processes to run, or we shouldn't be running anymore,
+        # fire our callback
+        if len(self.osprocs) == 0 or not self._running:
             self._fire(True)
             return
 
@@ -1127,6 +1112,28 @@ class OSProcessChain(defer.Deferred):
             self.callback(res)
         else:
             self.errback(StandardError(res))
+
+    def close(self, force=False, timeout=5):
+        """
+        Shuts down the current chain of processes.
+        If there is a current executing process, it will be closed via SSProcessProtocol.close.
+        No further processes will be run.
+        """
+
+        if not self._running:
+            # someone could call close after we've already fired, so don't fire again
+            if not self.called:
+                self._fire(True)
+            return self
+
+        self._running = False
+
+        # get current proc (in doneprocs) to close
+        curproc = self._doneprocs[-1]
+        curproc.close(force, timeout)
+
+        return self
+        
 
 # Spawn of the process using the module name
 factory = ProcessFactory(AppControllerService)
