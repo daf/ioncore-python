@@ -554,12 +554,13 @@ class AppAgent(Process):
         # TODO: when we learn how to do this, we can fix it
         if len(self.sqlstreams) > 1:
             log.error("Cannot currently start more than one SQLStream")
-        else:
-            sspp = SSServerProcessProtocol(ready_callback=self._sqlstream_started, ready_callbackargs={'sqlstreamid':ssid})
-            sspp.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
+            return
 
-            sspp.spawn()
-            self.sqlstreams[ssid]['serverproc'] = sspp
+        sspp = SSServerProcessProtocol(self, ready_callback=self._sqlstream_started, ready_callbackargs={'sqlstreamid':ssid})
+        sspp.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
+
+        sspp.spawn()
+        self.sqlstreams[ssid]['serverproc'] = sspp
 
     #@defer.inlineCallbacks
     def _sqlstream_ended(self, result, *args):
@@ -948,7 +949,7 @@ class SSClientProcessProtocol(SSProcessProtocol):
 
             newargs.append("--run=%s" % self.temp_file)
 
-        SSProcessProtocol.spawn(self, binary, newargs)
+        return SSProcessProtocol.spawn(self, binary, newargs)
 
     def processEnded(self, reason):
         SSProcessProtocol.processEnded(self, reason)
@@ -964,15 +965,30 @@ class SSClientProcessProtocol(SSProcessProtocol):
 #
 
 class SSServerProcessProtocol(SSProcessProtocol):
+    """
+    SSProcessProtocol for starting a SQLstream daemon.
+    
+    Note the spawn method is overridden here to return a deferred which is called back
+    when the server reports it is ready instead of when it exits. The deferred for when
+    it exits can still be accessed by the deferred_exited attr, or you can simply add
+    callbacks to it using the addCallback method. This override is so it can be used in an
+    OSProcessChain.
+    """
     def __init__(self, spawnargs, **kwargs):
-        """
-        @param ready_callback   Callback that is called when the server reports it is ready. That callback gets any additional kwargs passed here.
-        """
-        self.ready_callback = kwargs.pop('ready_callback', None)
-        self.ready_callbackargs = kwargs.pop('ready_callbackargs', {})
         SSProcessProtocol.__init__(self, spawnargs, **kwargs)
-
         self.binary = SSD_BIN
+
+    def spawn(self, binary=None, args=[]):
+        """
+        Calls the baseclass spawn but returns a deferred that's fired when the daemon
+        announces it is ready.
+        Then it can be used in a chain.
+        """
+        self.ready_deferred = defer.Deferred()
+
+        d = SSProcessProtocol.spawn(self, binary, args)
+
+        return self.ready_deferred
 
     def _close_impl(self, force):
         """
@@ -985,12 +1001,20 @@ class SSServerProcessProtocol(SSProcessProtocol):
         else:
             self.transport.write('!kill\n')
 
-    @defer.inlineCallbacks
+    #@defer.inlineCallbacks
     def outReceived(self, data):
         SSProcessProtocol.outReceived(self, data)
         if (SSD_READY_STRING in data):
-            yield self.ready_callback(**self.ready_callbackargs)
+            self.ready_deferred.callback(True)
+            #yield self.ready_callback(**self.ready_callbackargs)
 
+    def processEnded(self, reason):
+        # Process ended override.
+        # This override is to signal ready deferred if we never did, just in case.
+        if self.ready_deferred and not self.ready_deferred.called:
+            self.ready_deferred.callback(False)
+
+        self.processEnded(self, reason)
 #
 #
 # ########################################################
