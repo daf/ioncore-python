@@ -1047,7 +1047,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
         if self.ready_deferred and not self.ready_deferred.called:
             self.ready_deferred.callback(False)
 
-        self.processEnded(self, reason)
+        SSProcessProtocol.processEnded(self, reason)
 #
 #
 # ########################################################
