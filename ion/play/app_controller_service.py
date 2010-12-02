@@ -536,6 +536,10 @@ class AppAgent(Process):
 
     #@defer.inlineCallbacks
     def start_sqlstream(self, ssid, inp_queue, sql_defs):
+        """
+        Returns a deferred you can yield on. When finished, the sqlstream should be up
+        and running.
+        """
 
         # pick a new ssid/port if None passed in (which is atypical)
         if ssid == None:
@@ -556,11 +560,35 @@ class AppAgent(Process):
             log.error("Cannot currently start more than one SQLStream")
             return
 
-        sspp = SSServerProcessProtocol(self, ready_callback=self._sqlstream_started, ready_callbackargs={'sqlstreamid':ssid})
-        sspp.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
+        # 1. SQLStream daemon process
+        proc_server = SSServerProcessProtocol()
+        proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
+        proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
+        self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
 
-        sspp.spawn()
-        self.sqlstreams[ssid]['serverproc'] = sspp
+        # 2. Load definitions
+        proc_loaddefs = SSClientProcessProtocol(sqlcommands=self.sqlstreams[ssid]['sql_defs'])
+        #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
+
+        # 3. Turn pumps on
+        proc_pumpson = self.get_pumps_on_proc(ssid)
+
+        # run chain
+        chain = OSProcessChain([proc_server, proc_loaddefs, proc_pumpson])
+        chain.addCallback(self._sqlstream_start_chain_success, sqlstreamid=ssid)
+        chain.addErrback(self._sqlstream_start_chain_failure, sqlstreamid=ssid)
+        return chain.run()
+
+    def _sqlstream_start_chain_success(self, result, **kwargs):
+        ssid = kwargs.get("sqlstreamid")
+        log.info(" EVERYTHING WENT BETTER THAN EXPECTED %s" % ssid)
+        # inform service
+
+    def _sqlstream_start_chain_failure(self, failure, **kwargs):
+        ssid = kwargs.get("sqlstreamid")
+        log.error('this is jut the pits %s' % ssid)
+        failure.trap(StandardError)
+        # inform service
 
     #@defer.inlineCallbacks
     def _sqlstream_ended(self, result, *args):
@@ -579,11 +607,10 @@ class AppAgent(Process):
     def _sqlstream_started(self, *args, **kwargs):
         """
         SQLStream daemon has started.
-        Calls _load_sqlstream_defs.
         """
         ssid = kwargs.get('sqlstreamid')
         log.debug("SQLStream server (%s) has started" % ssid)
-        self._load_sqlstream_defs(ssid)
+        #self._load_sqlstream_defs(ssid)
 
     def _load_sqlstream_defs(self, ssid):
         """
@@ -624,33 +651,35 @@ class AppAgent(Process):
         """
         log.info("ctl_sqlstream received " + content['action'])
 
-        if content['action'] == 'pumps_on':
-            self.pumps_on(content['sqlstreamid'])
-        elif content['action'] == 'pumps_off':
-            self.pumps_off(content['sqlstreamid'])
-
         yield self.reply_ok(msg, {'value':'ok'}, {})
 
-    #@defer.inlineCallbacks
-    def pumps_on(self, sqlstreamid):
+        if content['action'] == 'pumps_on':
+            #self.pumps_on(content['sqlstreamid'])
+            proc_pumpson = self.get_pumps_on_proc(content['sqlstreamid'])
+            proc_pumpson.addCallback(self._pumps_on_callback, sqlstreamid=content['sqlstreamid'])
+            yield proc_pumpson.spawn()  # TODO: could never return!
+
+        elif content['action'] == 'pumps_off':
+            proc_pumpsoff = self.get_pumps_off_proc(content['sqlstreamid'])
+            proc_pumpsoff.addCallback(self._pumps_off_callback, sqlstreamid=content['sqlstreamid'])
+            yield proc_pumpsoff.spawn()  # TODO: could never return!
+
+    def get_pumps_on_proc(self, sqlstreamid):
         """
         Instructs the given SQLStream worker to turn its pumps on.
         It will begin or resume reading from its queue.
         """
-        log.info("pumps_on: %d" % sqlstreamid)
 
         sql_cmd = """
                   ALTER PUMP "SignalsPump" START;
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        sspp = SSClientProcessProtocol(sqlcommands=sql_cmd)
-        sspp.addCallback(self._pumps_on_callback, sqlstreamid=sqlstreamid)
-        
-        sspp.spawn()
-        self.sqlstreams[sqlstreamid]['proc'] = sspp
+        proc_pumpson = SSClientProcessProtocol(sqlcommands=sql_cmd)
+        return proc_pumpson
 
     @defer.inlineCallbacks
+    # TODO: DELETE ?
     def _pumps_on_callback(self, result, *args):
         log.debug("CALLBACK for pumps on: %d" % result['exitcode'])
         
@@ -669,12 +698,11 @@ class AppAgent(Process):
             # TODO: inform app controller?
 
     #@defer.inlineCallbacks
-    def pumps_off(self, sqlstreamid):
+    def get_pumps_off_proc(self, sqlstreamid):
         """
-        Instructs the given SQLStream worker to turn its pumps off.
-        It will no longer read from its queue.
+        Builds an SSProcessProtocol to nstructs the given SQLStream worker to turn its pumps off.
+        It will no longer read from its queue after this process is spawned.
         """
-        log.info("pumps_off: %d" % sqlstreamid)
 
         sql_cmd = """
                   ALTER PUMP "SignalsPump" STOP;
@@ -683,13 +711,11 @@ class AppAgent(Process):
                   """
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        sspp = SSClientProcessProtocol(sqlcommands=sql_cmd)
-        sspp.addCallback(self._pumps_off_callback, sqlstreamid=sqlstreamid)
-
-        sspp.spawn()
-        self.sqlstreams[sqlstreamid]['proc'] = sspp
+        proc_pumpsoff = SSClientProcessProtocol(sqlcommands=sql_cmd)
+        return proc_pumpsoff
     
     @defer.inlineCallbacks
+    # TODO: DELETE ?
     def _pumps_off_callback(self, result, *args):
         log.debug("CALLBACK 2 for pumps OFF: %d" % result['exitcode'])
 
@@ -977,6 +1003,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
     def __init__(self, spawnargs, **kwargs):
         SSProcessProtocol.__init__(self, spawnargs, **kwargs)
         self.binary = SSD_BIN
+        self.ready_deferred = defer.Deferred()
 
     def spawn(self, binary=None, args=[]):
         """
@@ -984,11 +1011,17 @@ class SSServerProcessProtocol(SSProcessProtocol):
         announces it is ready.
         Then it can be used in a chain.
         """
-        self.ready_deferred = defer.Deferred()
 
-        d = SSProcessProtocol.spawn(self, binary, args)
+        SSProcessProtocol.spawn(self, binary, args)
 
         return self.ready_deferred
+
+    def addReadyCallback(self, callback, **kwargs):
+        """
+        Adds a callback to the deferred returned by spawn in this server override.
+        Similar to addCallback, just for a different internal deferred.
+        """
+        self.ready_deferred.addCallback(callback, kwargs)
 
     def _close_impl(self, force):
         """
