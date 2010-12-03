@@ -793,19 +793,17 @@ class SSProcessProtocol(protocol.ProcessProtocol):
     """
     TODO: Class for connecting to SQLStream through Twisted
     """
-    def __init__(self, spawnargs=[], **kwargs):
+    def __init__(self, binary=None, spawnargs=[], **kwargs):
         """
         """
+        self.errlines           = []
+        self.outlines           = []
 
-        self.spawnargs = spawnargs
-
-        self.errlines = []
-        self.outlines = []
-
-        self.binary = None      # binary to run; set this in a derived class
-        self.deferred_exited = defer.Deferred()   # is called back on process end
-        self.used = False       # do not allow anyone to use again
-        self.close_timeout = None
+        self.binary             = binary            # binary to run; set this in a derived class
+        self.spawnargs          = spawnargs         # arguments to spawn after binary
+        self.deferred_exited    = defer.Deferred()  # is called back on process end
+        self.used               = False             # do not allow anyone to use again
+        self.close_timeout      = None
 
     def spawn(self, binary=None, args=[]):
         """
@@ -910,6 +908,8 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         # call method in App Agent we set up when constructing
         #yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
 
+        # TODO: ERRBACK IF != 0
+
         # if this was called as a result of a close() call, we need to cancel the timeout so
         # it won't try to kill again
         if self.close_timeout != None and self.close_timeout.active():
@@ -934,14 +934,13 @@ class SSClientProcessProtocol(SSProcessProtocol):
     Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
     it will execute the commands upon launching the client process.
     """
-    def __init__(self, spawnargs=[], **kwargs):
+    def __init__(self, binary=None, spawnargs=[], **kwargs):
         """
         @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
         """
         self.sqlcommands = kwargs.pop('sqlcommands', None)
-        SSProcessProtocol.__init__(self, spawnargs, **kwargs)
+        SSProcessProtocol.__init__(self, binary=SSC_BIN, spawnargs=spawnargs, **kwargs)
 
-        self.binary     = SSC_BIN
         self.temp_file  = None
     
     def spawn(self, binary=None, args=[]):
@@ -989,9 +988,8 @@ class SSServerProcessProtocol(SSProcessProtocol):
     callbacks to it using the addCallback method. This override is so it can be used in an
     OSProcessChain.
     """
-    def __init__(self, spawnargs=[], **kwargs):
-        SSProcessProtocol.__init__(self, spawnargs, **kwargs)
-        self.binary = SSD_BIN
+    def __init__(self, binary=None, spawnargs=[], **kwargs):
+        SSProcessProtocol.__init__(self, binary=SSD_BIN, spawnargs=spawnargs, **kwargs)
         self.ready_deferred = defer.Deferred()
 
     def spawn(self, binary=None, args=[]):
@@ -1030,14 +1028,26 @@ class SSServerProcessProtocol(SSProcessProtocol):
     def outReceived(self, data):
         SSProcessProtocol.outReceived(self, data)
         if (SSD_READY_STRING in data):
-            self.ready_deferred.callback(True)
+            
+            # must simulate processEnded callback value
+            cba = { 'exitcode' : 0,
+                    'outlines' : self.outlines,
+                    'errlines' : self.errlines }
+
+            self.ready_deferred.callback(cba)
             #yield self.ready_callback(**self.ready_callbackargs)
 
     def processEnded(self, reason):
         # Process ended override.
         # This override is to signal ready deferred if we never did, just in case.
         if self.ready_deferred and not self.ready_deferred.called:
-            self.ready_deferred.callback(False)
+            
+            # must simulate processEnded callback value
+            cba = { 'exitcode' : 0,
+                    'outlines' : self.outlines,
+                    'errlines' : self.errlines }
+
+            self.ready_deferred.callback(cba)
 
         SSProcessProtocol.processEnded(self, reason)
 #
