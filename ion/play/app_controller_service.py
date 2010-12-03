@@ -1052,6 +1052,8 @@ class OSProcessChain(defer.Deferred):
     If any of them error, the chain is aborted and the errback is raised.
     """
 
+    DEBUG = True        # If True, pauses execution after each command. Call _run_one() to resume.
+
     def __init__(self, osprocs):
         """
         Constructor.
@@ -1064,8 +1066,16 @@ class OSProcessChain(defer.Deferred):
 
         self._doneprocs = []
         self._results   = []
-        self._started   = False
+        self._running   = False
 
+        self._lenprocs  = len(self.osprocs)
+
+    def __str__(self):
+        """
+        Returns a string representation of an OSProcess and its status.
+        """
+        return "OSProcessChain (running=%s, %d/%d)" % (str(self._running), len(self._doneprocs), self._lenprocs)
+        
     def run(self):
         """
         Starts running the chain of processes.
@@ -1073,6 +1083,7 @@ class OSProcessChain(defer.Deferred):
         @returns Itself, a deferred, that may be yielded on. Note this has no protection for
                  processes which never terminate.
         """
+        log.debug("OSProcessChain starting")
         self._running = True
         self._run_one()
         return self
@@ -1091,6 +1102,8 @@ class OSProcessChain(defer.Deferred):
         proc = self.osprocs.pop(0)
         self._doneprocs.append(proc)
 
+        log.debug(self.__str__() + ":running command: + %s %s" % (proc.binary, " ".join(proc.spawnargs)))
+
         pd = proc.spawn()
         pd.addCallback(self._proc_cb)
         pd.addErrback(self._proc_eb)
@@ -1100,13 +1113,24 @@ class OSProcessChain(defer.Deferred):
         Callback on single SSProcessProtocol success.
         """
         self._results.append(result)
-        self._run_one()
+
+        proc = self._doneprocs[-1]
+        log.debug(self.__str__() + ":command finished: (exit code: %d): - %s" % (result['exitcode'], proc.binary))
+
+        if OSProcessChain.DEBUG:
+            log.debug("OSProcessChain paused *** DEBUG ***: call _run_one()")
+        else:
+            self._run_one()
 
     def _proc_eb(self, failure):
         """
         Errback on single SSProcessProtocol failure.
         """
         failure.trap(StandardError)
+
+        proc = self._doneprocs[-1]
+        log.debug(self.__str__() + ":command ERROR: - %s" % proc.binary)
+
         self._results.append(failure.value)
         self._fire(False)
 
@@ -1118,6 +1142,8 @@ class OSProcessChain(defer.Deferred):
         # build doneprocs/results, expand to take unfinished procs (indicated with None results)
         self._doneprocs.extend(self.osprocs)
         self._results.extend([None for x in range(len(self.osprocs))])
+
+        log.debug(self.__str__() + ":terminating, success=%s" % str(success))
         
         res = zip(self._doneprocs, self._results)
         if success:
@@ -1131,6 +1157,8 @@ class OSProcessChain(defer.Deferred):
         If there is a current executing process, it will be closed via SSProcessProtocol.close.
         No further processes will be run.
         """
+
+        log.debug(self.__str__() + ":close")
 
         if not self._running:
             # someone could call close after we've already fired, so don't fire again
