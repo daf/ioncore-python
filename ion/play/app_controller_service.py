@@ -641,7 +641,7 @@ class AppAgent(Process):
         procs.append(proc_server)
 
         # 14. Load definitions
-        proc_loaddefs = SSClientProcessProtocol(sqlcommands=self.sqlstreams[ssid]['sql_defs'])
+        proc_loaddefs = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=self.sqlstreams[ssid]['sql_defs'])    # TODO: SDP PORT ONLY??
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
         procs.append(proc_loaddefs)
 
@@ -743,7 +743,7 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        proc_pumpson = SSClientProcessProtocol(sqlcommands=sql_cmd)
+        proc_pumpson = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP port
         return proc_pumpson
 
     @defer.inlineCallbacks
@@ -779,7 +779,7 @@ class AppAgent(Process):
                   """
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        proc_pumpsoff = SSClientProcessProtocol(sqlcommands=sql_cmd)
+        proc_pumpsoff = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP Port
         return proc_pumpsoff
     
     @defer.inlineCallbacks
@@ -1020,6 +1020,8 @@ class SSClientProcessProtocol(SSProcessProtocol):
         spawn implementation.
         """
         newargs = args
+        if len(args) == 0:
+            newargs.extend(self.spawnargs)
 
         if self.sqlcommands != None:
 
