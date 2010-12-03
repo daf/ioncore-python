@@ -44,6 +44,10 @@ DETECTION_TOPIC = "anf.detections"
 SSD_READY_STRING = "Server ready; enter"
 SSD_BIN = "/usr/local/sqlstream/SQLstream-2.5/bin/SQLstreamd"  # TODO: path search ourselves?
 SSC_BIN = "/usr/local/sqlstream/SQLstream-2.5/bin/sqllineClient" 
+SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
+
+SS_FIXED_DAEMON = "/home/daf/tmp/sqlstream/SQLstreamd"
+SS_FIXED_CLIENT = "/home/daf/tmp/sqlstream/sqllineClient"
 
 class AppControllerService(ServiceProcess):
     """
@@ -569,21 +573,84 @@ class AppAgent(Process):
             log.error("Cannot currently start more than one SQLStream")
             return
 
-        # 1. SQLStream daemon process
+        procs = []
+
+        # 1. Install SQLstream daemon
+        dirname = os.path.join(tempfile.gettempdir(), 'sqlstream-%s' % ssid)
+        proc_installer = SSProcessProtocol(binary=SS_INSTALLER_BIN, spawnargs=['--mode', 'unattended', '--prefix', dirname])
+        procs.append(proc_installer)
+
+        newdaemon = os.path.join(dirname, 'bin', 'SQLstreamd')
+        newclient = os.path.join(dirname, 'bin', 'sqllineClient')
+
+        # 2. Chmod daemon file to be able to write over it
+        proc_chmod_daemon = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', newdaemon])
+        procs.append(proc_chmod_daemon)
+
+        # 3. Chmod client file to be able to write to it
+        proc_chmod_client = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', newclient])
+        procs.append(proc_chmod_client)
+
+        # 4. Copy fixed daemon file over
+        proc_copy_daemon = SSProcessProtocol(binary="/bin/cp", spawnargs=[SS_FIXED_DAEMON, newdaemon])
+        procs.append(proc_copy_daemon)
+
+        # 5. Copy fixed client file over
+        proc_copy_client = SSProcessProtocol(binary="/bin/cp", spawnargs=[SS_FIXED_CLIENT, newclient])
+        procs.append(proc_copy_client)
+
+        # 6. Change SDP port
+        proc_sdp = SSProcessProtocol(binary="/bin/bash", spawnargs=["-c", "/bin/echo -e \"aspen.sdp.port=%s\\naspen.controlnode.url=sdp://localhost:%s\" >%s" % (5575, 5575, os.path.join(dirname, 'aspen.custom.properties'))]) # TODO: port number
+        procs.append(proc_sdp)
+
+        # 7. Change HSQLDB port in props file
+        origprops = os.path.join(dirname, 'catalog', 'ReposStorage.hsqldbserver.properties')
+        tempprops = os.path.join(tempfile.gettempdir(), 'ReposStorage.hsqldbserver.properties-%s' % ssid)
+
+        proc_hsqldb_port_props = SSProcessProtocol(binary="/bin/bash", spawnargs=["-c", "/bin/sed 's/:9001/:%s/' <%s >%s" % (ssid, origprops, tempprops)])   # TODO: PORT NUM
+        procs.append(proc_hsqldb_port_props)
+
+        # 8. Make HSQLDB props file writable
+        proc_chmod_hsqldb_port_props = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', origprops])
+        procs.append(proc_chmod_hsqldb_port_props)
+
+        # 9. Copy HSQLDB props file back to original
+        proc_hsqldb_port_props_copy = SSProcessProtocol(binary="/bin/mv", spawnargs=[tempprops, origprops])
+        procs.append(proc_hsqldb_port_props_copy)
+
+        # 10. Change HSQLDB port in bin
+        orighsqldbbin = os.path.join(dirname, 'bin', 'hsqldb')
+        temphsqldbbin = os.path.join(tempfile.gettempdir(), 'hsqldb-%s' % ssid)
+        
+        proc_hsqldb_port_bin = SSProcessProtocol(binary="/bin/bash", spawnargs=["-c", "/bin/sed 's/DB_PORT=9001/DB_PORT=%s/' <%s >%s" % (ssid, orighsqldbbin, temphsqldbbin)])   # TODO: PORT NUM
+        procs.append(proc_hsqldb_port_bin)
+
+        # 11. Make HSQLDB bin file writable
+        proc_chmod_hsqldb_port_bin = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', orighsqldbbin])
+        procs.append(proc_chmod_hsqldb_port_bin)
+
+        # 12. Copy HSQLDB bin file back to original
+        proc_hsqldb_port_bin_copy = SSProcessProtocol(binary="/bin/mv", spawnargs=[temphsqldbbin, orighsqldbbin])
+        procs.append(proc_hsqldb_port_bin_copy)
+
+        # 13. SQLStream daemon process
         proc_server = SSServerProcessProtocol()
         proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
         self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
+        procs.append(proc_server)
 
-        # 2. Load definitions
+        # 14. Load definitions
         proc_loaddefs = SSClientProcessProtocol(sqlcommands=self.sqlstreams[ssid]['sql_defs'])
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
+        procs.append(proc_loaddefs)
 
-        # 3. Turn pumps on
+        # 15. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
+        procs.append(proc_pumpson)
 
         # run chain
-        chain = OSProcessChain([proc_server, proc_loaddefs, proc_pumpson])
+        chain = OSProcessChain(procs)
         chain.addCallback(self._sqlstream_start_chain_success, sqlstreamid=ssid)
         chain.addErrback(self._sqlstream_start_chain_failure, sqlstreamid=ssid)
         self.sqlstreams[ssid]['procchain'] = chain
@@ -614,12 +681,14 @@ class AppAgent(Process):
         #defer.returnValue(None)
 
     #@defer.inlineCallbacks
-    def _sqlstream_started(self, *args, **kwargs):
+    def _sqlstream_started(self, result, *args, **kwargs):
         """
         SQLStream daemon has started.
         """
-        ssid = kwargs.get('sqlstreamid')
+        ssid = args[0].get('sqlstreamid')
         log.debug("SQLStream server (%s) has started" % ssid)
+
+        return result   # pass result down the chain
 
     #@defer.inlineCallbacks
     def _sqlstream_defs_loaded(self, result, *args):
