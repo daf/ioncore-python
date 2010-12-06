@@ -42,8 +42,8 @@ CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core mac
 EXCHANGE_NAME = "magnet.topic"
 DETECTION_TOPIC = "anf.detections"
 SSD_READY_STRING = "Server ready; enter"
-SSD_BIN = "/usr/local/sqlstream/SQLstream-2.5/bin/SQLstreamd"  # TODO: path search ourselves?
-SSC_BIN = "/usr/local/sqlstream/SQLstream-2.5/bin/sqllineClient" 
+SSD_BIN = "bin/SQLstreamd"  # TODO: path search ourselves?
+SSC_BIN = "bin/sqllineClient" 
 SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
 
 SS_FIXED_DAEMON = "/home/daf/tmp/sqlstream/SQLstreamd"
@@ -634,20 +634,21 @@ class AppAgent(Process):
         procs.append(proc_hsqldb_port_bin_copy)
 
         # 13. SQLStream daemon process
-        proc_server = SSServerProcessProtocol()
+        proc_server = SSServerProcessProtocol(binroot=dirname)
         proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
         self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
         procs.append(proc_server)
 
         # 14. Load definitions
-        proc_loaddefs = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=self.sqlstreams[ssid]['sql_defs'])    # TODO: SDP PORT ONLY??
+        proc_loaddefs = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
         procs.append(proc_loaddefs)
 
         # 15. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
-        procs.append(proc_pumpson)
+        # TODO: cannot do yet, not enough info in above call
+        #procs.append(proc_pumpson)
 
         # run chain
         chain = OSProcessChain(procs)
@@ -743,7 +744,7 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        proc_pumpson = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP port
+        proc_pumpson = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP port, binroot
         return proc_pumpson
 
     @defer.inlineCallbacks
@@ -779,7 +780,7 @@ class AppAgent(Process):
                   """
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        proc_pumpsoff = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP Port
+        proc_pumpsoff = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP Port, binroot
         return proc_pumpsoff
     
     @defer.inlineCallbacks
@@ -1006,9 +1007,15 @@ class SSClientProcessProtocol(SSProcessProtocol):
     def __init__(self, binary=None, spawnargs=[], **kwargs):
         """
         @param sqlcommands  SQL commands to run in the client. May be None, which leaves stdin open.
+        @param binroot      Root path to prepend on the binary name.
         """
         self.sqlcommands = kwargs.pop('sqlcommands', None)
-        SSProcessProtocol.__init__(self, binary=SSC_BIN, spawnargs=spawnargs, **kwargs)
+        binroot = kwargs.pop("binroot", None)
+
+        if binroot != None:
+            binary = os.path.join(binroot, SSC_BIN)
+
+        SSProcessProtocol.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
 
         self.temp_file  = None
     
@@ -1060,7 +1067,13 @@ class SSServerProcessProtocol(SSProcessProtocol):
     OSProcessChain.
     """
     def __init__(self, binary=None, spawnargs=[], **kwargs):
-        SSProcessProtocol.__init__(self, binary=SSD_BIN, spawnargs=spawnargs, **kwargs)
+
+        binroot = kwargs.pop("binroot", None)
+
+        if binroot != None:
+            binary = os.path.join(binroot, SSD_BIN)
+
+        SSProcessProtocol.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
         self.ready_deferred = defer.Deferred()
 
     def spawn(self, binary=None, args=[]):
@@ -1133,7 +1146,7 @@ class OSProcessChain(defer.Deferred):
     If any of them error, the chain is aborted and the errback is raised.
     """
 
-    DEBUG = True        # If True, pauses execution after each command. Call _run_one() to resume.
+    DEBUG = False        # If True, pauses execution after each command. Call _run_one() to resume.
 
     def __init__(self, osprocs):
         """
