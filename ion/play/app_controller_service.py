@@ -25,6 +25,7 @@ from ion.services.cei.epu_reconfigure import EPUControllerClient
 import uuid
 import zlib
 import base64
+import pprint
 
 try:
     import multiprocessing  # python 2.6 only
@@ -915,6 +916,7 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         else:
             theargs.extend(args)
 
+        log.debug("SSProcessProtocol::spawn %s %s" % (str(binary), " ".join(theargs)))
         reactor.spawnProcess(self, binary, theargs, env=None)
         self.used = True
 
@@ -986,7 +988,10 @@ class SSProcessProtocol(protocol.ProcessProtocol):
 
     #@defer.inlineCallbacks
     def processEnded(self, reason):
-        log.debug("SSProcessProtocol: process ended (exitcode: %d)" % reason.value.exitCode)
+        log.debug("SSProcessProtocol: process ended ") #(exitcode: %d)" % reason.value.exitCode)
+        # TODO: reason can be a ProcessDone or ProcessTerminated, different data in them so reason.value.exitCode not always available.
+        pprint.pprint(reason)
+        pprint.pprint(str(reason))
 
         # call method in App Agent we set up when constructing
         #yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
@@ -1209,7 +1214,8 @@ class OSProcessChain(defer.Deferred):
         proc = self.osprocs.pop(0)
         self._doneprocs.append(proc)
 
-        log.debug(self.__str__() + ":running command: + %s %s" % (proc.binary, " ".join(proc.spawnargs)))
+        #log.debug(self.__str__() + ":running command: + %s %s" % (proc.binary, " ".join(proc.spawnargs)))
+        log.debug(" RUN ONE BOYEE")
 
         pd = proc.spawn()
         pd.addCallback(self._proc_cb)
@@ -1234,6 +1240,7 @@ class OSProcessChain(defer.Deferred):
         Errback on single SSProcessProtocol failure.
         """
         failure.trap(StandardError)
+        failure.printBriefTraceback()
 
         proc = self._doneprocs[-1]
         log.debug(self.__str__() + ":command ERROR: - %s" % proc.binary)
