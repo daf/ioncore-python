@@ -42,10 +42,14 @@ CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core mac
 EXCHANGE_NAME = "magnet.topic"
 DETECTION_TOPIC = "anf.detections"
 SSD_READY_STRING = "Server ready; enter"
-SSD_BIN = "bin/SQLstreamd"  # TODO: path search ourselves?
+SSD_BIN = "bin/SQLstreamd"
 SSC_BIN = "bin/sqllineClient" 
-SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
 
+# TODO: deployables
+SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
+SS_SEISMIC_JAR = "/usr/local/seismic/lib/ucsd-seismic.jar"
+
+# TODO: obv
 SS_FIXED_DAEMON = "/home/daf/tmp/sqlstream/SQLstreamd"
 SS_FIXED_CLIENT = "/home/daf/tmp/sqlstream/sqllineClient"
 
@@ -633,19 +637,28 @@ class AppAgent(Process):
         proc_hsqldb_port_bin_copy = SSProcessProtocol(binary="/bin/mv", spawnargs=[temphsqldbbin, orighsqldbbin])
         procs.append(proc_hsqldb_port_bin_copy)
 
-        # 13. SQLStream daemon process
+        # 13. Make new HSQLDB bin executable again
+        proc_chmod_hsqldb_exec = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+x', orighsqldbbin])
+        procs.append(proc_chmod_hsqldb_exec)
+
+        # 14. Copy UCSD seismic application jar to plugin dir
+        plugindir = os.path.join(dirname, "plugin")
+        proc_seismic_jar = SSProcessProtocol(binary="/bin/cp", spawnargs=[SS_SEISMIC_JAR, plugindir])
+        procs.append(proc_seismic_jar)
+
+        # 15. SQLStream daemon process
         proc_server = SSServerProcessProtocol(binroot=dirname)
         proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
         self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
         procs.append(proc_server)
 
-        # 14. Load definitions
-        proc_loaddefs = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
+        # 16. Load definitions
+        proc_loaddefs = SSClientProcessProtocol(spawnargs=['5575'], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
         procs.append(proc_loaddefs)
 
-        # 15. Turn pumps on
+        # 17. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
         # TODO: cannot do yet, not enough info in above call
         #procs.append(proc_pumpson)
