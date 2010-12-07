@@ -1233,6 +1233,10 @@ class OSProcessChain(defer.Deferred):
         Calls the process chain's callback or errback as per the success parameter.
         This method builds the proc/result list to pass back through either mechanism.
         """
+
+        # we're no longer running, indicate as such
+        self._running = False
+
         # build doneprocs/results, expand to take unfinished procs (indicated with None results)
         self._doneprocs.extend(self.osprocs)
         self._results.extend([None for x in range(len(self.osprocs))])
