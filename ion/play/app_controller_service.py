@@ -1170,8 +1170,7 @@ class OSProcessChain(defer.Deferred):
         proc = self.osprocs.pop(0)
         self._doneprocs.append(proc)
 
-        #log.debug(self.__str__() + ":running command: + %s %s" % (proc.binary, " ".join(proc.spawnargs)))
-        log.debug(" RUN ONE BOYEE")
+        log.debug(self.__str__() + ":running command: + %s %s" % (proc.binary, " ".join(proc.spawnargs)))
 
         pd = proc.spawn()
         pd.addCallback(self._proc_cb)
