@@ -221,7 +221,7 @@ class AppControllerService(ServiceProcess):
             streamcount = len(self.workers[op_unit_id]['sqlstreams'])
 
         stream_conf = { 'sqlt_vars' : { 'inp_queue' : queue_name },
-                        'port'      : 9000 + streamcount + 1 }
+                        'ssid'      : streamcount + 1 }
 
         self.workers[op_unit_id]['sqlstreams'].append( { 'conf' : stream_conf,
                                                          'state': {} })
@@ -267,7 +267,7 @@ class AppControllerService(ServiceProcess):
             conf['unique_instances'][wid] = { 'sqlstreams' : [] }
             ssdefs = conf['unique_instances'][wid]['sqlstreams']
             for ssinfo in winfo['sqlstreams']:
-                ssdefs.append( { 'port'      : ssinfo['conf']['port'],
+                ssdefs.append( { 'ssid'      : ssinfo['conf']['ssid'],
                                  'sqlt_vars' : ssinfo['conf']['sqlt_vars'] } )
 
         print json.dumps(conf)
@@ -455,11 +455,11 @@ class AppAgent(Process):
             sqlstreams = eval(self.spawn_args['sqlstreams'])
 
             for ssinfo in sqlstreams:
-                port = ssinfo['port']
+                ssid = ssinfo['ssid']
                 inp_queue = ssinfo['sqlt_vars']['inp_queue']
                 defs = self._get_sql_defs(uconf=ssinfo['sqlt_vars'])
 
-                self.start_sqlstream(port, inp_queue, defs)
+                self.start_sqlstream(ssid, inp_queue, defs)
 
     @defer.inlineCallbacks
     def plc_terminate(self):
@@ -544,13 +544,25 @@ class AppAgent(Process):
         """
         log.info("op_start_sqlstream") # : %s" % str(self.sqlstreams[ssid]))
 
-        port = content['port']
-        sqlt_vars = content['sqlt_vars']
-        defs = self._get_sql_defs(uconf=sqlt_vars)
+        ssid        = content['ssid']
+        sqlt_vars   = content['sqlt_vars']
+        defs        = self._get_sql_defs(uconf=sqlt_vars)
+        failed      = False
+        ex          = None
 
-        self.start_sqlstream(port, sqlt_vars['inp_queue'], defs)
+        try:
+            self.start_sqlstream(ssid, sqlt_vars['inp_queue'], defs)
+        except ValueError,e:
+            failed = True
+            ex = e
 
-        yield self.reply_ok(msg, {'value':'ok'}, {})
+        if failed:
+            resp = { 'response':'failed',
+                     'exception':ex }
+        else:
+            resp = { 'response':'ok' }
+
+        yield self.reply_ok(msg, resp, {})
 
     #@defer.inlineCallbacks
     def start_sqlstream(self, ssid, inp_queue, sql_defs):
@@ -559,34 +571,33 @@ class AppAgent(Process):
         and running.
         """
 
-        # pick a new ssid/port if None passed in (which is atypical)
+        # TODO: proper validation?
         if ssid == None:
-            start = 9001
-            while start in self.sqlstreams.keys():
-                start += 1
-            ssid = start
-
-        log.debug("Starting SQLStream")
+            raise ValueError("ssid is None")
 
         # TODO: when we learn how to do this, we can fix it
-        if len(self.sqlstreams) > 1:
-            log.error("Cannot currently start more than one SQLStream")
-            return
+        if ssid in self.sqlstreams.keys():
+            log.error("Duplicate SSID requested")
+            raise ValueError("Duplicate SSID requested (%s)" % ssid)
 
         procs = []
-        
+
         # vars needed for params
-        hsqldbport  = "5575"
-        sdpport     = str(ssid)
+        sdpport     = str(5575 + int(ssid))
+        hsqldbport  = str(9000 + int(ssid))
         dirname     = os.path.join(tempfile.gettempdir(), 'sqlstream.%s.%s' % (sdpport, hsqldbport))
         installerbin= os.path.join(os.path.dirname(__file__), "app_controller_service", "install_sqlstream.sh")
 
+        log.debug("Starting SQLStream (sdp=%s, hsqldb=%s, install dir=%s)" % (sdpport, hsqldbport, dirname))
+
         # record state
-        self.sqlstreams[ssid] = {'port':ssid,
-                                 'state':'starting',
-                                 'inp_queue':inp_queue,
-                                 'dirname':dirname,
-                                 'sql_defs':sql_defs}
+        self.sqlstreams[ssid] = {'ssid'         : ssid,
+                                 'hsqldbport'   : hsqldbport,
+                                 'sdpport'      : sdpport,
+                                 'state'        : 'starting',
+                                 'inp_queue'    : inp_queue,
+                                 'dirname'      : dirname,
+                                 'sql_defs'     : sql_defs}
 
         # 1. Install SQLstream daemon
         proc_installer = SSProcessProtocol(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
