@@ -10,21 +10,25 @@ SS_INSTALLER_BIN="/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
 SS_SEISMIC_JAR="/usr/local/seismic/lib/ucsd-seismic.jar"
 RABBITMQ_JAVA_CLIENT_ZIP="/usr/local/rabbitmq-java-client-bin-1.5.3.zip"
 
-SS_FIXED_CLIENT="/home/daf/tmp/sqlstream/sqllineClient"
-
 # ports are specified on the command line
-if [ $# -ne 2 ]; then
-    echo "Usage: $0 <SDP port ex 5570> <HSQLDB port ex 9001>"
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <SDP port ex 5570> <HSQLDB port ex 9001> [full install path, optional]"
     exit 1
 fi
 
-SDPPORT=$1
-HSQLDBPORT=$2
+SDPPORT=$1; shift
+HSQLDBPORT=$1; shift
+if [ $# -eq 1 ]; then
+    DIRNAME=$1
+else
+    DIRNAME=${TMPDIR-/tmp}/sqlstream.$SDPPORT.$HSQLDBPORT
+fi
 
-# 1. Generate a new directory for sqlstream (and base RABBITDIR off of it)
-DIRNAME=`mktemp -d -t sqlstream.XXXXXX`
-RABBITBASE=`basename $RABBITMQ_JAVA_CLIENT_ZIP`
-RABBITDIR=`dirname $DIRNAME`/${RABBITBASE%.zip}
+# 1. Make sure dirname specified is legal
+if [ -d $DIRNAME ]; then
+    echo "Specified directory $DIRNAME already exists!"
+    exit 1
+fi
 
 # 2. Install SQLstream daemon into new temp dir
 $SS_INSTALLER_BIN --mode unattended --prefix $DIRNAME
@@ -137,6 +141,8 @@ cp $SS_SEISMIC_JAR $DIRNAME/plugin
 
 # 9. Unzip rabbitmq client zipfile to a known location
 # possible security risk : using known file
+RABBITBASE=`basename $RABBITMQ_JAVA_CLIENT_ZIP`
+RABBITDIR=`dirname $DIRNAME`/${RABBITBASE%.zip}
 if [ ! -d "${RABBITDIR}" ]; then
     unzip $RABBITMQ_JAVA_CLIENT_ZIP -d $RABBITDIR >/dev/null
 fi
@@ -149,8 +155,5 @@ ln -s $RABBITDIR/commons-io-1.2.jar $AUTOCPDIR/commons-io-1.2.jar
 ln -s $DIRNAME/plugin/AmqpAdapter.jar $AUTOCPDIR/AmqpAdapter.jar
 
 # DONE!
-
-# echo location of sqlstream install dir to stdout and exit
-echo $DIRNAME
 exit 0
 
