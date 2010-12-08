@@ -566,11 +566,6 @@ class AppAgent(Process):
                 start += 1
             ssid = start
 
-        self.sqlstreams[ssid] = {'port':ssid,
-                                 'state':'starting',
-                                 'inp_queue':inp_queue,
-                                 'sql_defs':sql_defs}
-
         log.debug("Starting SQLStream")
 
         # TODO: when we learn how to do this, we can fix it
@@ -579,87 +574,37 @@ class AppAgent(Process):
             return
 
         procs = []
+        
+        # vars needed for params
+        hsqldbport  = "5575"
+        sdpport     = str(ssid)
+        dirname     = os.path.join(tempfile.gettempdir(), 'sqlstream.%s.%s' % (sdpport, hsqldbport))
+        installerbin= os.path.join(os.path.dirname(__file__), "app_controller_service", "install_sqlstream.sh")
+
+        # record state
+        self.sqlstreams[ssid] = {'port':ssid,
+                                 'state':'starting',
+                                 'inp_queue':inp_queue,
+                                 'dirname':dirname,
+                                 'sql_defs':sql_defs}
 
         # 1. Install SQLstream daemon
-        dirname = os.path.join(tempfile.gettempdir(), 'sqlstream-%s' % ssid)
-        proc_installer = SSProcessProtocol(binary=SS_INSTALLER_BIN, spawnargs=['--mode', 'unattended', '--prefix', dirname])
+        proc_installer = SSProcessProtocol(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
         procs.append(proc_installer)
 
-        newdaemon = os.path.join(dirname, 'bin', 'SQLstreamd')
-        newclient = os.path.join(dirname, 'bin', 'sqllineClient')
-
-        # 2. Chmod daemon file to be able to write over it
-        proc_chmod_daemon = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', newdaemon])
-        procs.append(proc_chmod_daemon)
-
-        # 3. Chmod client file to be able to write to it
-        proc_chmod_client = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', newclient])
-        procs.append(proc_chmod_client)
-
-        # 4. Copy fixed daemon file over
-        proc_copy_daemon = SSProcessProtocol(binary="/bin/cp", spawnargs=[SS_FIXED_DAEMON, newdaemon])
-        procs.append(proc_copy_daemon)
-
-        # 5. Copy fixed client file over
-        proc_copy_client = SSProcessProtocol(binary="/bin/cp", spawnargs=[SS_FIXED_CLIENT, newclient])
-        procs.append(proc_copy_client)
-
-        # 6. Change SDP port
-        proc_sdp = SSProcessProtocol(binary="/bin/bash", spawnargs=["-c", "/bin/echo -e \"aspen.sdp.port=%s\\naspen.controlnode.url=sdp://localhost:%s\" >%s" % (5575, 5575, os.path.join(dirname, 'aspen.custom.properties'))]) # TODO: port number
-        procs.append(proc_sdp)
-
-        # 7. Change HSQLDB port in props file
-        origprops = os.path.join(dirname, 'catalog', 'ReposStorage.hsqldbserver.properties')
-        tempprops = os.path.join(tempfile.gettempdir(), 'ReposStorage.hsqldbserver.properties-%s' % ssid)
-
-        proc_hsqldb_port_props = SSProcessProtocol(binary="/bin/bash", spawnargs=["-c", "/bin/sed 's/:9001/:%s/' <%s >%s" % (ssid, origprops, tempprops)])   # TODO: PORT NUM
-        procs.append(proc_hsqldb_port_props)
-
-        # 8. Make HSQLDB props file writable
-        proc_chmod_hsqldb_port_props = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', origprops])
-        procs.append(proc_chmod_hsqldb_port_props)
-
-        # 9. Copy HSQLDB props file back to original
-        proc_hsqldb_port_props_copy = SSProcessProtocol(binary="/bin/mv", spawnargs=[tempprops, origprops])
-        procs.append(proc_hsqldb_port_props_copy)
-
-        # 10. Change HSQLDB port in bin
-        orighsqldbbin = os.path.join(dirname, 'bin', 'hsqldb')
-        temphsqldbbin = os.path.join(tempfile.gettempdir(), 'hsqldb-%s' % ssid)
-        
-        proc_hsqldb_port_bin = SSProcessProtocol(binary="/bin/bash", spawnargs=["-c", "/bin/sed 's/DB_PORT=9001/DB_PORT=%s/' <%s >%s" % (ssid, orighsqldbbin, temphsqldbbin)])   # TODO: PORT NUM
-        procs.append(proc_hsqldb_port_bin)
-
-        # 11. Make HSQLDB bin file writable
-        proc_chmod_hsqldb_port_bin = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+w', orighsqldbbin])
-        procs.append(proc_chmod_hsqldb_port_bin)
-
-        # 12. Copy HSQLDB bin file back to original
-        proc_hsqldb_port_bin_copy = SSProcessProtocol(binary="/bin/mv", spawnargs=[temphsqldbbin, orighsqldbbin])
-        procs.append(proc_hsqldb_port_bin_copy)
-
-        # 13. Make new HSQLDB bin executable again
-        proc_chmod_hsqldb_exec = SSProcessProtocol(binary="/bin/chmod", spawnargs=['+x', orighsqldbbin])
-        procs.append(proc_chmod_hsqldb_exec)
-
-        # 14. Copy UCSD seismic application jar to plugin dir
-        plugindir = os.path.join(dirname, "plugin")
-        proc_seismic_jar = SSProcessProtocol(binary="/bin/cp", spawnargs=[SS_SEISMIC_JAR, plugindir])
-        procs.append(proc_seismic_jar)
-
-        # 15. SQLStream daemon process
+        # 2. SQLStream daemon process
         proc_server = SSServerProcessProtocol(binroot=dirname)
         proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
         self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
         procs.append(proc_server)
 
-        # 16. Load definitions
-        proc_loaddefs = SSClientProcessProtocol(spawnargs=['5575'], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
+        # 3. Load definitions
+        proc_loaddefs = SSClientProcessProtocol(spawnargs=[sdpport], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
         procs.append(proc_loaddefs)
 
-        # 17. Turn pumps on
+        # 4. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
         # TODO: cannot do yet, not enough info in above call
         #procs.append(proc_pumpson)
