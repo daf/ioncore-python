@@ -965,6 +965,10 @@ class SSProcessProtocol(protocol.ProcessProtocol):
                 'outlines' : self.outlines,
                 'errlines' : self.errlines }
 
+        if exitcode != 0:
+            self.deferred_exited.errback(StandardError(cba))
+            return
+
         self.deferred_exited.callback(cba)
 
 #
