@@ -7,7 +7,7 @@
 """
 
 import os, string, tempfile
-from collections import MutableSequence
+#from collections import MutableSequence        # MUTABLESEQUENCE
 
 from ion.core import ioninit
 
@@ -1115,7 +1115,10 @@ class SSServerProcessProtocol(SSProcessProtocol):
 #
 #
 
-class TaskChain(MutableSequence):
+# Disabling MutableSequence for 2.5 compat -> deriving from list for now.
+# search for MUTABLESEQUENCE to see what needs to be uncommented/fixed.
+#class TaskChain(MutableSequence):
+class TaskChain(list):
     """
     Used to set up a chain of tasks that run one after another.
     If any of them error, the chain is aborted and the errback is raised.
@@ -1129,7 +1132,7 @@ class TaskChain(MutableSequence):
 
         @param tasks  Takes a list of tasks that will be executed in order.
         """
-        self._list      = []        # implementation backend for MutableSequence methods to use
+        #self._list      = []        # implementation backend for MutableSequence methods to use        # MUTABLESEQUENCE
 
         self.extend(tasks)
 
@@ -1166,22 +1169,24 @@ class TaskChain(MutableSequence):
             if not callable(obj):
                 raise ValueError("Item must be a callable")
 
-    def __getitem__(self, index):
-        return self._list.__getitem__(index)
+    # MUTABLESEQUENCE
+    #def __getitem__(self, index):
+    #    return self._list.__getitem__(index)
 
-    def __setitem__(self, index, value):
-        self._check_type(value)
-        self._list.__setitem(index, value)
+    #def __setitem__(self, index, value):
+    #    self._check_type(value)
+    #    self._list.__setitem(index, value)
 
-    def __delitem__(self, index):
-        self._list.__delitem__(index)
+    #def __delitem__(self, index):
+    #    self._list.__delitem__(index)
 
-    def insert(self, index, value):
-        self._check_type(value)
-        self._list.insert(index, value)
+    #def insert(self, index, value):
+    #    self._check_type(value)
+    #    self._list.insert(index, value)
 
-    def __len__(self):
-        return len(self._list)
+    #def __len__(self):
+    #    return len(self._list)
+    # END MUTABLESEQUENCE
 
     def run(self):
         """
@@ -1210,6 +1215,10 @@ class TaskChain(MutableSequence):
         self._curtask = self.pop(0)
         args = []
         kwargs = {}
+
+        # make sure this is legit - we have no way of checking on insert right now due to not being a MutableSequence
+        self._check_type(self._curtask)
+
         if isinstance(self._curtask, tuple):
             aslist = list(self._curtask)
             self._curtask = aslist.pop(0)
@@ -1284,7 +1293,7 @@ class TaskChain(MutableSequence):
 
         self._running = False
 
-        if self.curtask_def:
+        if self._curtask_def:
             self._curtask_def.cancel()
 
         return self._deferred
