@@ -484,8 +484,8 @@ class AppAgent(Process):
     def kill_sqlstream_clients(self):
         dl = []
         for sinfo in self.sqlstreams.values():
-            if sinfo.has_key('procchain') and sinfo['procchain'] != None:
-                dl.append(sinfo['procchain'].close())
+            if sinfo.has_key('taskchain') and sinfo['taskchain'] != None:
+                dl.append(sinfo['taskchain'].close())
 
         deflist = defer.DeferredList(dl)
         return deflist
@@ -582,6 +582,7 @@ class AppAgent(Process):
             raise ValueError("Duplicate SSID requested (%s)" % ssid)
 
         procs = []
+        chain = TaskChain()
 
         # vars needed for params
         sdpport     = str(5575 + int(ssid))
@@ -602,31 +603,30 @@ class AppAgent(Process):
 
         # 1. Install SQLstream daemon
         proc_installer = SSProcessProtocol(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
-        procs.append(proc_installer)
+        chain.append(proc_installer.spawn)
 
         # 2. SQLStream daemon process
         proc_server = SSServerProcessProtocol(binroot=dirname)
         proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
         self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
-        procs.append(proc_server)
+        chain.append(proc_server.spawn)
 
         # 3. Load definitions
         proc_loaddefs = SSClientProcessProtocol(spawnargs=[sdpport], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
-        procs.append(proc_loaddefs)
+        chain.append(proc_loaddefs.spawn)
 
         # 4. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
         # TODO: cannot do yet, not enough info in above call
-        #procs.append(proc_pumpson)
+        #chain.append(proc_pumpson.spawn)
 
         # run chain
-        chain = OSProcessChain(procs)
-        chain.addCallback(self._sqlstream_start_chain_success, sqlstreamid=ssid)
-        chain.addErrback(self._sqlstream_start_chain_failure, sqlstreamid=ssid)
-        self.sqlstreams[ssid]['procchain'] = chain
-        return chain.run()
+        chaindef = chain.run()
+        chaindef.addCallback(self._sqlstream_start_chain_success, sqlstreamid=ssid)
+        chaindef.addErrback(self._sqlstream_start_chain_failure, sqlstreamid=ssid)
+        return chaindef
 
     def _sqlstream_start_chain_success(self, result, **kwargs):
         ssid = kwargs.get("sqlstreamid")
@@ -1038,8 +1038,8 @@ class SSServerProcessProtocol(SSProcessProtocol):
     Note the spawn method is overridden here to return a deferred which is called back
     when the server reports it is ready instead of when it exits. The deferred for when
     it exits can still be accessed by the deferred_exited attr, or you can simply add
-    callbacks to it using the addCallback method. This override is so it can be used in an
-    OSProcessChain.
+    callbacks to it using the addCallback method. This override is so it can be used in a
+    TaskChain.
     """
     def __init__(self, binary=None, spawnargs=[], **kwargs):
 
@@ -1115,140 +1115,6 @@ class SSServerProcessProtocol(SSProcessProtocol):
 #
 #
 
-class OSProcessChain(defer.Deferred):
-    """
-    Used to set up a chain of SSProcessProtocols that run one after another.
-    If any of them error, the chain is aborted and the errback is raised.
-    """
-
-    DEBUG = False        # If True, pauses execution after each command. Call _run_one() to resume.
-
-    def __init__(self, osprocs):
-        """
-        Constructor.
-
-        @param osprocs  Takes a list of SSProcessProtocols that will be spawned.
-        """
-        
-        defer.Deferred.__init__(self)
-        self.osprocs = osprocs
-
-        self._doneprocs = []
-        self._results   = []
-        self._running   = False
-
-        self._lenprocs  = len(self.osprocs)
-
-    def __str__(self):
-        """
-        Returns a string representation of an OSProcess and its status.
-        """
-        return "OSProcessChain (running=%s, %d/%d)" % (str(self._running), len(self._doneprocs), self._lenprocs)
-        
-    def run(self):
-        """
-        Starts running the chain of processes.
-
-        @returns Itself, a deferred, that may be yielded on. Note this has no protection for
-                 processes which never terminate.
-        """
-        log.debug("OSProcessChain starting")
-        self._running = True
-        self._run_one()
-        return self
-
-    def _run_one(self):
-        """
-        Runs the next SSProcessProtocol.
-        """
-
-        # if we have no more processes to run, or we shouldn't be running anymore,
-        # fire our callback
-        if len(self.osprocs) == 0 or not self._running:
-            self._fire(True)
-            return
-
-        proc = self.osprocs.pop(0)
-        self._doneprocs.append(proc)
-
-        log.debug(self.__str__() + ":running command: + %s %s" % (proc.binary, " ".join(proc.spawnargs)))
-
-        pd = proc.spawn()
-        pd.addCallback(self._proc_cb)
-        pd.addErrback(self._proc_eb)
-
-    def _proc_cb(self, result):
-        """
-        Callback on single SSProcessProtocol success.
-        """
-        self._results.append(result)
-
-        proc = self._doneprocs[-1]
-        log.debug(self.__str__() + ":command finished: (exit code: %d): - %s" % (result['exitcode'], proc.binary))
-
-        if OSProcessChain.DEBUG:
-            log.debug("OSProcessChain paused *** DEBUG ***: call _run_one()")
-        else:
-            self._run_one()
-
-    def _proc_eb(self, failure):
-        """
-        Errback on single SSProcessProtocol failure.
-        """
-        failure.trap(StandardError)
-        failure.printBriefTraceback()
-
-        proc = self._doneprocs[-1]
-        log.debug(self.__str__() + ":command ERROR: - %s" % proc.binary)
-
-        self._results.append(failure.value)
-        self._fire(False)
-
-    def _fire(self, success):
-        """
-        Calls the process chain's callback or errback as per the success parameter.
-        This method builds the proc/result list to pass back through either mechanism.
-        """
-
-        # we're no longer running, indicate as such
-        self._running = False
-
-        # build doneprocs/results, expand to take unfinished procs (indicated with None results)
-        self._doneprocs.extend(self.osprocs)
-        self._results.extend([None for x in range(len(self.osprocs))])
-
-        log.debug(self.__str__() + ":terminating, success=%s" % str(success))
-        
-        res = zip(self._doneprocs, self._results)
-        if success:
-            self.callback(res)
-        else:
-            self.errback(StandardError(res))
-
-    def close(self, force=False, timeout=5):
-        """
-        Shuts down the current chain of processes.
-        If there is a current executing process, it will be closed via SSProcessProtocol.close.
-        No further processes will be run.
-        """
-
-        log.debug(self.__str__() + ":close")
-
-        if not self._running:
-            # someone could call close after we've already fired, so don't fire again
-            if not self.called:
-                self._fire(True)
-            return self
-
-        self._running = False
-
-        # get current proc (in doneprocs) to close
-        curproc = self._doneprocs[-1]
-        curproc.close(force, timeout)
-
-        return self
-        
-
 class TaskChain(MutableSequence):
     """
     Used to set up a chain of tasks that run one after another.
@@ -1316,7 +1182,6 @@ class TaskChain(MutableSequence):
 
     def __len__(self):
         return len(self._list)
-
 
     def run(self):
         """
