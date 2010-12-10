@@ -1126,10 +1126,23 @@ class SSServerProcessProtocol(SSProcessProtocol):
 class TaskChain(list):
     """
     Used to set up a chain of tasks that run one after another.
-    If any of them error, the chain is aborted and the errback is raised.
-    """
 
-    DEBUG = False        # If True, pauses execution after each task. Call _run_one() to resume.
+    A task chain can be used to script a sequence of actions and have the Twisted
+    reactor manage it all. The run method returns a deferred that is called back
+    when all tasks in the chain complete. If any task errors, the chain is aborted
+    and the errback is raised. The tasks are executed in order.
+
+    The tasks should be callables that can either return deferreds or execute
+    synchronously (and TaskChain will wrap them in deferreds). If any of them error,
+    the chain is aborted and the errback is raised.
+
+    A TaskChain is a list of either callables or tuples of 2 or 3 length, that consist
+    of a callable, a list of arguments to be passed, and an optional dict of keyword
+    arguments to be passed.
+
+    Due to not having MutableSequence available in Python 2.5, type checking is done
+    only at time of execution.
+    """
 
     def __init__(self, *tasks):
         """
@@ -1246,10 +1259,7 @@ class TaskChain(list):
 
         log.debug(self.__str__() + ":task finished")
 
-        if TaskChain.DEBUG:
-            log.debug("TaskChain paused *** DEBUG ***: call _run_one()")
-        else:
-            self._run_one()
+        self._run_one()
 
     def _proc_eb(self, failure):
         """
