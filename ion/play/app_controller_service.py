@@ -598,7 +598,7 @@ class AppAgent(Process):
                                  'sql_defs'     : sql_defs}
 
         # 1. Install SQLstream daemon
-        proc_installer = SSProcessProtocol(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
+        proc_installer = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
         chain.append(proc_installer.spawn)
 
         # 2. SQLStream daemon process
@@ -739,7 +739,7 @@ class AppAgent(Process):
     #@defer.inlineCallbacks
     def get_pumps_off_proc(self, sqlstreamid):
         """
-        Builds an SSProcessProtocol to nstructs the given SQLStream worker to turn its pumps off.
+        Builds an OSProcess to nstructs the given SQLStream worker to turn its pumps off.
         It will no longer read from its queue after this process is spawned.
         """
 
@@ -832,9 +832,39 @@ class TopicWorkerReceiver(Receiver):
 #
 #
 
-class SSProcessProtocol(protocol.ProcessProtocol):
+class OSProcess(protocol.ProcessProtocol):
     """
-    TODO: Class for connecting to SQLStream through Twisted
+    An operating system process wrapper for twisted.
+
+    OSProcess is a twisted safe wrapper for a process running on the operating system
+    outside of a capability container. It can be used to spawn one shot tasks or long 
+    running daemons.
+
+    It is intended that you derive from this class to customize behavior, but this base
+    works well for one shot commands like cp, mv, rm etc.
+
+    It is not safe to yield on the deferred returned by spawn unless you know the process
+    will terminate. Call close in order to have a timeout protect you.
+
+    Example:
+    @verbatim
+        from ion.util.os_process import OSProcess
+        def cb(res):
+            print "\n".join(res['stdout'])
+
+        lsproc = OSProcess(binary="/bin/ls", spawnargs=["/var"])
+        lsproc.addCallback(cb)
+        lsproc.spawn()
+    @endverbatim
+
+    Tips for derived implementations:
+    - The deferred returned by spawn only calls back when the process ends. For a daemon,
+      you may want to return a different deferred in spawn to indicate when the daemon
+      is ready, called back for example on receiving text on stdout indicating ready.
+    - The _close_impl method is where you want to add your custom shutdown instructions,
+      which may involve something like writing to the process' stdin or closing stdin
+      for graceful shutdown.
+
     """
     def __init__(self, binary=None, spawnargs=[], **kwargs):
         """
@@ -875,7 +905,7 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         else:
             theargs.extend(args)
 
-        log.debug("SSProcessProtocol::spawn %s %s" % (str(binary), " ".join(theargs)))
+        log.debug("OSProcess::spawn %s %s" % (str(binary), " ".join(theargs)))
         reactor.spawnProcess(self, binary, theargs, env=None)
         self.used = True
 
@@ -937,25 +967,34 @@ class SSProcessProtocol(protocol.ProcessProtocol):
             self.transport.signalProcess("TERM")
 
     def connectionMade(self):
-        log.debug("SSProcessProtocol: process started")
+        """
+        Notice that the process has started.
+        This base method provides logging notice only.
+        """
+        log.debug("OSProcess: process started")
 
     def outReceived(self, data):
+        """
+        Output on stdout has been received.
+        Stores the output in a list.
+        """
         self.outlines.append(data)
 
     def errReceived(self, data):
+        """
+        Output on stderr has been received.
+        Stores the output in a list.
+        """
         self.errlines.append(data)
 
-    #@defer.inlineCallbacks
     def processEnded(self, reason):
-        log.debug("SSProcessProtocol: process ended ") #(exitcode: %d)" % reason.value.exitCode)
-        # TODO: reason can be a ProcessDone or ProcessTerminated, different data in them so reason.value.exitCode not always available.
-        pprint.pprint(reason)
-        pprint.pprint(str(reason))
-
-        try:
-            exitcode = reason.value.exitCode
-        except AttributeArror:
-            log.debug("WHAT THE : %s" % reason.__class__)
+        """
+        Notice that the process has ended.
+        Will callback the deferred returned by spawn with a dict containing
+        the exit code, the lines produced on stdout, and the lines on stderr.
+        If the exit code is non zero, the errback is raised.
+        """
+        log.debug("OSProcess: process ended (exitcode: %d)" % reason.value.exitCode)
 
         # if this was called as a result of a close() call, we need to cancel the timeout so
         # it won't try to kill again
@@ -967,7 +1006,7 @@ class SSProcessProtocol(protocol.ProcessProtocol):
                 'outlines' : self.outlines,
                 'errlines' : self.errlines }
 
-        if exitcode != 0:
+        if reason.value.exitCode != 0:
             self.deferred_exited.errback(StandardError(cba))
             return
 
@@ -979,7 +1018,7 @@ class SSProcessProtocol(protocol.ProcessProtocol):
 #
 #
 
-class SSClientProcessProtocol(SSProcessProtocol):
+class SSClientProcessProtocol(OSProcess):
     """
     SQLStream client process protocol.
     Upon construction, looks for a sqlcommands keyword argument. If that parameter exists,
@@ -996,7 +1035,7 @@ class SSClientProcessProtocol(SSProcessProtocol):
         if binroot != None:
             binary = os.path.join(binroot, SSC_BIN)
 
-        SSProcessProtocol.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
+        OSProcess.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
 
         self.temp_file  = None
     
@@ -1022,10 +1061,10 @@ class SSClientProcessProtocol(SSProcessProtocol):
 
             newargs.append("--run=%s" % self.temp_file)
 
-        return SSProcessProtocol.spawn(self, binary, newargs)
+        return OSProcess.spawn(self, binary, newargs)
 
     def processEnded(self, reason):
-        SSProcessProtocol.processEnded(self, reason)
+        OSProcess.processEnded(self, reason)
 
         # remove temp file if we created one earlier
         if self.temp_file != None:
@@ -1037,9 +1076,9 @@ class SSClientProcessProtocol(SSProcessProtocol):
 #
 #
 
-class SSServerProcessProtocol(SSProcessProtocol):
+class SSServerProcessProtocol(OSProcess):
     """
-    SSProcessProtocol for starting a SQLstream daemon.
+    OSProcess for starting a SQLstream daemon.
     
     Note the spawn method is overridden here to return a deferred which is called back
     when the server reports it is ready instead of when it exits. The deferred for when
@@ -1054,7 +1093,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
         if binroot != None:
             binary = os.path.join(binroot, SSD_BIN)
 
-        SSProcessProtocol.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
+        OSProcess.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
         self.ready_deferred = defer.Deferred()
 
     def spawn(self, binary=None, args=[]):
@@ -1064,7 +1103,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
         Then it can be used in a chain.
         """
 
-        SSProcessProtocol.spawn(self, binary, args)
+        OSProcess.spawn(self, binary, args)
 
         return self.ready_deferred
 
@@ -1091,7 +1130,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
 
     #@defer.inlineCallbacks
     def outReceived(self, data):
-        SSProcessProtocol.outReceived(self, data)
+        OSProcess.outReceived(self, data)
         if (SSD_READY_STRING in data):
             
             # must simulate processEnded callback value
@@ -1114,7 +1153,7 @@ class SSServerProcessProtocol(SSProcessProtocol):
 
             self.ready_deferred.callback(cba)
 
-        SSProcessProtocol.processEnded(self, reason)
+        OSProcess.processEnded(self, reason)
 
 # Spawn of the process using the module name
 factory = ProcessFactory(AppControllerService)
