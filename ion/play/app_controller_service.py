@@ -6,7 +6,7 @@
 @brief Application Controller for load balancing
 """
 
-import os, string, tempfile
+import os, string, tempfile, shutil
 #from collections import MutableSequence        # MUTABLESEQUENCE
 
 from ion.core import ioninit
@@ -476,10 +476,23 @@ class AppAgent(Process):
         dl = []
         for sinfo in self.sqlstreams.values():
             if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
-                dl.append(sinfo['serverproc'].close(timeout=120))   # needs a high timeout, takes a while to close!
+                dl.append(self.kill_sqlstream(sinfo['ssid']))
         
         deflist = defer.DeferredList(dl)
         return deflist
+
+    def kill_sqlstream(self, ssid):
+        """
+        Shuts down and deletes a single SQLstream instance.
+        @return A deferred which will be called back when the steps to stop and delete a SQLstream
+                instance are complete.
+        """
+        chain = TaskChain()
+        if self.sqlstreams[ssid]['state'] == 'running':
+            chain.append(self.get_pumps_off_proc().spawn)       # TODO: SDP port?
+        chain.append((self.sqlstreams[ssid]['serverproc'].close, [], { 'timeout':30 }))
+        chain.append((shutil.rmtree, [self.sqlstreams[ssid]['dirname']]))
+        return chain.run()
 
     def kill_sqlstream_clients(self):
         dl = []
@@ -1228,7 +1241,7 @@ class TaskChain(list):
             self._curtask = aslist.pop(0)
             args = aslist.pop(0)
             if len(aslist):
-                kwargs = aslist.pop
+                kwargs = aslist.pop()
 
         # possibly not a deferred at all!
         self._curtask_def = defer.maybeDeferred(self._curtask, *args, **kwargs)
