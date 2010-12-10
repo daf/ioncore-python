@@ -85,11 +85,6 @@ class AppControllerService(ServiceProcess):
         # instrument announcement queue name
         self.announce_queue = "instrument_announce"
 
-        # TODO: can use receiver just initialized, not activated - will create a queue
-        #       consider that?
-        #amsgs = {self.announce_queue: {'name_type':'worker', 'args':{'scope':'global'}}}
-        #yield ioninit.container_instance.declare_messaging(amsgs)
-
         # consume the announcement queue
         self.announce_recv = TopicWorkerReceiver(name=self.announce_queue,
                                             scope='global',
@@ -231,17 +226,6 @@ class AppControllerService(ServiceProcess):
             yield self._start_sqlstream(op_unit_id, stream_conf)
         else:
             yield self.request_reconfigure()
-
-            # TODO: maybe assign op_unit_id to it as well?
-            # we're requesting an op unit start up, so put it in the available unbound queues
-            # next opunit to come available will get it.
-            #self.unboundqueues.insert(0, queue_name)
-
-            # request spawn new VM
-            # wait for rpc message to app controller that says vm is up, then request sqlstream
-            #defer.returnValue(None)
-        #else:
-            #yield self._start_sqlstream(worker, queue_name)
 
     @defer.inlineCallbacks
     def request_reconfigure(self):
@@ -585,11 +569,9 @@ class AppAgent(Process):
         and running.
         """
 
-        # TODO: proper validation?
         if ssid == None:
             raise ValueError("ssid is None")
 
-        # TODO: when we learn how to do this, we can fix it
         if ssid in self.sqlstreams.keys():
             log.error("Duplicate SSID requested")
             raise ValueError("Duplicate SSID requested (%s)" % ssid)
@@ -676,6 +658,7 @@ class AppAgent(Process):
         return result   # pass result down the chain
 
     #@defer.inlineCallbacks
+    # TODO: probably remove
     def _sqlstream_defs_loaded(self, result, *args):
         """
         SQLStream defs have finished loading.
@@ -692,7 +675,6 @@ class AppAgent(Process):
             self.pumps_on(ssid)
         else:
             log.warning("Loading defs failed, SS # %d" % ssid)
-            # TODO: inform app controller?
 
         #defer.returnValue(None)
 
