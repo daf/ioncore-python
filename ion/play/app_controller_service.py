@@ -489,7 +489,7 @@ class AppAgent(Process):
         """
         chain = TaskChain()
         if self.sqlstreams[ssid]['state'] == 'running':
-            chain.append(self.get_pumps_off_proc().spawn)       # TODO: SDP port?
+            chain.append(self.get_pumps_off_proc(ssid).spawn)
         chain.append((self.sqlstreams[ssid]['serverproc'].close, [], { 'timeout':30 }))
         chain.append((shutil.rmtree, [self.sqlstreams[ssid]['dirname']]))
         return chain.run()
@@ -626,14 +626,14 @@ class AppAgent(Process):
         chain.append(proc_server.spawn)
 
         # 3. Load definitions
-        proc_loaddefs = SSClientProcessProtocol(spawnargs=[sdpport], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)    # TODO: SDP PORT ONLY??
+        proc_loaddefs = SSClientProcessProtocol(spawnargs=[sdpport], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)
         #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
         chain.append(proc_loaddefs.spawn)
 
         # 4. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
-        # TODO: cannot do yet, not enough info in above call
-        #chain.append(proc_pumpson.spawn)
+        #proc_pumpson.addCallback(self._pumps_on_callback, sqlstreamid=ssid)
+        chain.append(proc_pumpson.spawn)
 
         # run chain
         chaindef = chain.run()
@@ -728,7 +728,10 @@ class AppAgent(Process):
                   ALTER PUMP "DetectionsPump" START;
                   ALTER PUMP "DetectionMessagesPump" START;
                   """
-        proc_pumpson = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP port, binroot
+        sdpport = self.sqlstreams[sqlstreamid]['sdpport']
+        binroot = self.sqlstreams[sqlstreamid]['dirname']
+        proc_pumpson = SSClientProcessProtocol(spawnargs=[sdpport], binroot=binroot, sqlcommands=sql_cmd)
+
         return proc_pumpson
 
     @defer.inlineCallbacks
@@ -764,7 +767,10 @@ class AppAgent(Process):
                   """
         self.sqlstreams[sqlstreamid]['state'] = 'stopped'
 
-        proc_pumpsoff = SSClientProcessProtocol(spawnargs=[5575], sqlcommands=sql_cmd) # TODO: SDP Port, binroot
+        sdpport = self.sqlstreams[sqlstreamid]['sdpport']
+        binroot = self.sqlstreams[sqlstreamid]['dirname']
+        proc_pumpsoff = SSClientProcessProtocol(spawnargs=[sdpport], binroot=binroot, sqlcommands=sql_cmd)
+
         return proc_pumpsoff
     
     @defer.inlineCallbacks
