@@ -950,10 +950,10 @@ class SSProcessProtocol(protocol.ProcessProtocol):
         pprint.pprint(reason)
         pprint.pprint(str(reason))
 
-        # call method in App Agent we set up when constructing
-        #yield self.callback(exitcode=reason.value.exitCode, outlines=self.outlines, errlines=self.errlines, **self.callbackargs)
-
-        # TODO: ERRBACK IF != 0
+        try:
+            exitcode = reason.value.exitCode
+        except AttributeArror:
+            log.debug("WHAT THE : %s" % reason.__class__)
 
         # if this was called as a result of a close() call, we need to cancel the timeout so
         # it won't try to kill again
