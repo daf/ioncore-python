@@ -212,17 +212,19 @@ class AppControllerService(ServiceProcess):
         # now we have an op_unit_id, update the config
         if not self.workers.has_key(op_unit_id):
             self.workers[op_unit_id] = {'metrics' : {'cores':2}, # all workers should have at least two, will be updated when status is updated
-                                        'state' : {},
-                                        'sqlstreams' : []}
+                                        'state' : '',
+                                        'sqlstreams' : {}}
             streamcount = 0
         else:
             streamcount = len(self.workers[op_unit_id]['sqlstreams'])
 
-        stream_conf = { 'sqlt_vars' : { 'inp_queue' : queue_name },
-                        'ssid'      : streamcount + 1 }
+        ssid = streamcount + 1
 
-        self.workers[op_unit_id]['sqlstreams'].append( { 'conf' : stream_conf,
-                                                         'state': {} })
+        stream_conf = { 'sqlt_vars' : { 'inp_queue' : queue_name },
+                        'ssid'      : ssid }
+
+        self.workers[op_unit_id]['sqlstreams']['ssid'] = { 'conf' : stream_conf,
+                                                           'state': {} }
 
         if direct_request == True:
             yield self._start_sqlstream(op_unit_id, stream_conf)
@@ -279,33 +281,37 @@ class AppControllerService(ServiceProcess):
 
         return False
 
-    @defer.inlineCallbacks
-    def op_opunit_ready(self, content, headers, msg):
+    def op_opunit_status(self, content, headers, msg):
         """
-        An op unit has started and reported in. It has no running SQLStream instances at
-        this time.
+        Handles an application agent reporting an operational unit's status.
+        Details include its current state, metrics about the system, status of
+        SQLstream instances.
+        """
+        opunit_id   = content['id']
+        proc_id     = content['proc_id']
+        state       = content['state']
+        metrics     = content['metrics']
+        sqlstreams  = content['sqlstreams']
 
-        TODO: do away with this, just replace it with a full agent status update
-        """
-        log.info("Op Unit reporting ready " + content.__str__())
-        if self.workers.has_key(content['id']):
-            log.error("Duplicate worker ID just reported in")
+        log.info("Op Unit (%s) status update: state (%s), sqlstreams (%d)" % (opunit_id, state, len(sqlstreams)))
 
         if not self.workers.has_key(content['id']):
             self.workers[content['id']] = {}
 
-        self.workers[content['id']].update({'metrics':content['metrics'], 
-                                            'sqlstreams':[]})
+        self.workers[opunit_id].update({'metrics':metrics,
+                                        'state': state,
+                                        'proc_id': proc_id,
+                                        'sqlstreams':sqlstreams})
 
-        yield self.reply_ok(msg, {'value': 'ok'}, {})
+        self.reply_ok(msg, {'value': 'ok'}, {})
 
     @defer.inlineCallbacks
-    def _start_sqlstream(self, worker_id, conf):
+    def _start_sqlstream(self, op_unit_id, conf):
         """
         Tells an op unit to start a SQLStream instance.
         """
-
-        yield self.rpc_send(worker_id, 'start_sqlstream', conf)
+        proc_id = self.workers[op_unit_id]['proc_id']
+        yield self.rpc_send(proc_id, 'start_sqlstream', conf)
 
     def _get_sql_def(self, **kwargs):
         """
@@ -418,6 +424,12 @@ class AppAgent(Process):
         """
         Process.__init__(self, receiver=receiver, spawnargs=spawnargs, **kwargs)
 
+        sa = spawnargs
+        if not sa:
+            sa = {}
+
+        self._opunit_id = sa.get("opunit_id", str(uuid.uuid4())[:8]) # if one didn't get assigned, make one up to report in to the app controller
+
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
 
@@ -433,9 +445,6 @@ class AppAgent(Process):
 
             self._sqldefs = uncompresseddefs
 
-        # let service know we're up
-        #self.opunit_ready()
-
         # check spawn args for sqlstreams, start them up as appropriate
         # expect a stringify'd python array of dicts
         if self.spawn_args.has_key('sqlstreams'):
@@ -447,6 +456,9 @@ class AppAgent(Process):
                 defs = self._get_sql_defs(uconf=ssinfo['sqlt_vars'])
 
                 self.start_sqlstream(ssid, inp_queue, defs)
+
+        # let controller know we're starting and have some sqlstreams starting, possibly
+        self.opunit_status()
 
     @defer.inlineCallbacks
     def plc_terminate(self):
@@ -494,6 +506,8 @@ class AppAgent(Process):
         Returns a fully substituted SQLStream SQL definition string.
         Using keyword arguments, you can update the default params passed in to spawn args.
         """
+        assert self.spawn_args.has_key('sqlt_vars') and self._sqldefs, "Required SQL definitions and substitution vars have not been set yet."
+
         conf = self.spawn_args['sqlt_vars'].copy()
         conf.update(uconf)
         conf.update(kwargs)
@@ -526,14 +540,16 @@ class AppAgent(Process):
             return multiprocessing.cpu_count()
 
     @defer.inlineCallbacks
-    # TODO: do away with this, do status only
-    def opunit_ready(self):
+    def opunit_status(self):
         """
-        Declares to the app controller that this op unit is ready. This indicates a freshly
-        started op unit with no running SQLStream instances.
+        Sends the current status of this Agent/Op Unit.
         """
-        (content, headers, msg) = yield self.send_controller_rpc('opunit_ready', id=self.id.full, metrics=self.metrics)
-        defer.returnValue(str(content))
+        content = { 'id' : self._opunit_id,
+                    'metrics' : self.metrics,
+                    'sqlstreams' : self.sqlstreams,
+                    'state' : 'temp' }
+
+        yield self.send_controller_rpc('opunit_status', **content)
 
     @defer.inlineCallbacks
     def op_start_sqlstream(self, content, headers, msg):
@@ -781,7 +797,7 @@ class AppAgent(Process):
         Wrapper to make rpc calls a bit easier. Builds standard info into content message like
         our id.
         """
-        content = {'id':self.id.full}
+        content = {'proc_id':self.id.full}
         content.update(kwargs)
 
         ret = yield self.rpc_send(self.target, operation, content, {}, **kwargs)
