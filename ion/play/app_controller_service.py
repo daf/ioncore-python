@@ -287,23 +287,38 @@ class AppControllerService(ServiceProcess):
         Details include its current state, metrics about the system, status of
         SQLstream instances.
         """
-        opunit_id   = content['id']
-        proc_id     = content['proc_id']
-        state       = content['state']
-        metrics     = content['metrics']
-        sqlstreams  = content['sqlstreams']
+        self._update_opunit_status(content)
+        self.reply_ok(msg, {'value': 'ok'}, {})
+
+    def request_opunit_status(self, opunit_id):
+        """
+        Asks an AppAgent to report in its status.
+        """
+        proc_id = self.workers[opunit_id]['proc_id']
+        d = self.rpc_send(proc_id, 'get_opunit_status', {})
+        d.addCallback(lambda res: self._update_opunit_status(res[0]))
+
+    def _update_opunit_status(self, status):
+        """
+        Internal method to handle updating an op unit's status.
+        Status updates can either come from heartbeats initiated by the AppAgent, or
+        on request from the AppController. This method handles both of those.
+        """
+        opunit_id   = status['id']
+        proc_id     = status['proc_id']
+        state       = status['state']
+        metrics     = status['metrics']
+        sqlstreams  = status['sqlstreams']
 
         log.info("Op Unit (%s) status update: state (%s), sqlstreams (%d)" % (opunit_id, state, len(sqlstreams)))
 
-        if not self.workers.has_key(content['id']):
-            self.workers[content['id']] = {}
+        if not self.workers.has_key(status['id']):
+            self.workers[status['id']] = {}
 
         self.workers[opunit_id].update({'metrics':metrics,
                                         'state': state,
                                         'proc_id': proc_id,
                                         'sqlstreams':sqlstreams})
-
-        self.reply_ok(msg, {'value': 'ok'}, {})
 
     @defer.inlineCallbacks
     def _start_sqlstream(self, op_unit_id, conf):
@@ -514,15 +529,32 @@ class AppAgent(Process):
         else:
             return multiprocessing.cpu_count()
 
+    def _get_opunit_status(self):
+        """
+        Builds this Agent's status.
+        @returns A dict containing status.
+        """
+        status = { 'id'          : self._opunit_id,
+                   'proc_id'     : self.id.full,
+                   'metrics'     : self.metrics,
+                   'sqlstreams'  : self.sqlstreams,
+                   'state'       : 'temp' }
+
+        return status
+
+    def op_get_opunit_status(self, content, headers, msg):
+        """
+        Handles a request from the AppController to give it status of this AppAgent.
+        """
+        status = self._get_opunit_status()
+        self.reply_ok(msg, status, {})
+
     @defer.inlineCallbacks
     def opunit_status(self):
         """
         Sends the current status of this Agent/Op Unit.
         """
-        content = { 'id' : self._opunit_id,
-                    'metrics' : self.metrics,
-                    'sqlstreams' : self.sqlstreams,
-                    'state' : 'temp' }
+        content = self._get_opunit_status()
 
         yield self.send_controller_rpc('opunit_status', **content)
 
