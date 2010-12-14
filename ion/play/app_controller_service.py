@@ -53,10 +53,6 @@ SSC_BIN = "bin/sqllineClient"
 SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
 SS_SEISMIC_JAR = "/usr/local/seismic/lib/ucsd-seismic.jar"
 
-# TODO: obv
-SS_FIXED_DAEMON = "/home/daf/tmp/sqlstream/SQLstreamd"
-SS_FIXED_CLIENT = "/home/daf/tmp/sqlstream/sqllineClient"
-
 class AppControllerService(ServiceProcess):
     """
     Defines an application controller service to perform load balancing.
