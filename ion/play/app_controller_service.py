@@ -843,7 +843,8 @@ class OSSSClientProcess(OSProcess):
         run that file. We modify the args keyword arg and send it up to the baseclass
         spawn implementation.
         """
-        newargs = args
+        newargs = args[:] # XXX must copy becuase otherwise, args keep appending to some 
+                          # shared args var?!?! makes no sense
         if len(args) == 0:
             newargs.extend(self.spawnargs)
 
