@@ -157,7 +157,7 @@ class AppControllerService(ServiceProcess):
 
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
-            yield self.request_sqlstream(queue_name)
+            self.request_sqlstream(queue_name)
             
         self.routing[queue_name].append(station_name)
         
@@ -222,13 +222,13 @@ class AppControllerService(ServiceProcess):
         else:
             streamcount = len(self.workers[op_unit_id]['sqlstreams'])
 
-        ssid = streamcount + 1
+        ssid = str(streamcount + 1)
 
         stream_conf = { 'sqlt_vars' : { 'inp_queue' : queue_name },
                         'ssid'      : ssid }
 
-        self.workers[op_unit_id]['sqlstreams']['ssid'] = { 'conf' : stream_conf,
-                                                           'state': {} }
+        self.workers[op_unit_id]['sqlstreams'][ssid] = { 'conf' : stream_conf,
+                                                         'state': '' }
 
         if direct_request == True:
             self._start_sqlstream(op_unit_id, stream_conf)
@@ -258,7 +258,7 @@ class AppControllerService(ServiceProcess):
         for (wid, winfo) in self.workers.items():
             conf['unique_instances'][wid] = { 'sqlstreams' : [] }
             ssdefs = conf['unique_instances'][wid]['sqlstreams']
-            for ssinfo in winfo['sqlstreams']:
+            for (ssid, ssinfo) in winfo['sqlstreams'].items():
                 ssdefs.append( { 'ssid'      : ssinfo['conf']['ssid'],
                                  'sqlt_vars' : ssinfo['conf']['sqlt_vars'] } )
 
