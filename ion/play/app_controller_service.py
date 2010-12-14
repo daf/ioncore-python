@@ -634,12 +634,10 @@ class AppAgent(Process):
 
         # 3. Load definitions
         proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)
-        #proc_loaddefs.addCallback(self._sqlstream_defs_loaded, sqlstreamid=ssid)
         chain.append(proc_loaddefs.spawn)
 
         # 4. Turn pumps on
         proc_pumpson = self.get_pumps_on_proc(ssid)
-        #proc_pumpson.addCallback(self._pumps_on_callback, sqlstreamid=ssid)
         chain.append(proc_pumpson.spawn)
 
         # run chain
@@ -650,14 +648,21 @@ class AppAgent(Process):
 
     def _sqlstream_start_chain_success(self, result, **kwargs):
         ssid = kwargs.get("sqlstreamid")
-        log.info(" EVERYTHING WENT BETTER THAN EXPECTED %s" % ssid)
-        # inform service
+        log.info("SQLstream (%s) started" % ssid)
+
+        self.sqlstreams[ssid]['state'] = 'running'
+
+        self.opunit_status() # report
 
     def _sqlstream_start_chain_failure(self, failure, **kwargs):
         ssid = kwargs.get("sqlstreamid")
-        log.error('this is jut the pits %s' % ssid)
+        log.error('SQLstream (%s) startup ERROR - %s' % (ssid, str(failure)))
+
+        self.sqlstreams[ssid]['state'] = 'error'
+
         failure.trap(StandardError)
-        # inform service
+
+        self.opunit_status() # report
 
     #@defer.inlineCallbacks
     def _sqlstream_ended(self, result, *args):
@@ -682,27 +687,6 @@ class AppAgent(Process):
 
         return result   # pass result down the chain
 
-    #@defer.inlineCallbacks
-    # TODO: probably remove
-    def _sqlstream_defs_loaded(self, result, *args):
-        """
-        SQLStream defs have finished loading.
-        Begins starting pumps.
-        """
-        ssid = args[0].get('sqlstreamid')
-        log.debug("SQLStream server (%s) has loaded defs" % ssid)
-
-        # remove ref to proc
-        self.sqlstreams[ssid].pop('proc', None)
-
-        if result['exitcode'] == 0:
-            self.sqlstreams[ssid]['state'] = 'stopped'
-            self.pumps_on(ssid)
-        else:
-            log.warning("Loading defs failed, SS # %d" % ssid)
-
-        #defer.returnValue(None)
-
     @defer.inlineCallbacks
     def op_ctl_sqlstream(self, content, headers, msg):
         """
@@ -714,7 +698,6 @@ class AppAgent(Process):
         yield self.reply_ok(msg, {'value':'ok'}, {})
 
         if content['action'] == 'pumps_on':
-            #self.pumps_on(content['sqlstreamid'])
             proc_pumpson = self.get_pumps_on_proc(content['sqlstreamid'])
             proc_pumpson.addCallback(self._pumps_on_callback, sqlstreamid=content['sqlstreamid'])
             yield proc_pumpson.spawn()  # TODO: could never return!
@@ -742,9 +725,8 @@ class AppAgent(Process):
         return proc_pumpson
 
     @defer.inlineCallbacks
-    # TODO: DELETE ?
     def _pumps_on_callback(self, result, *args):
-        log.debug("CALLBACK for pumps on: %d" % result['exitcode'])
+        log.debug("Pumps on returned: %d" % result['exitcode'])
         
         sqlstreamid = args[0].get('sqlstreamid')
 
@@ -781,9 +763,8 @@ class AppAgent(Process):
         return proc_pumpsoff
     
     @defer.inlineCallbacks
-    # TODO: DELETE ?
     def _pumps_off_callback(self, result, *args):
-        log.debug("CALLBACK 2 for pumps OFF: %d" % result['exitcode'])
+        log.debug("Pumps off returned: %d" % result['exitcode'])
 
         sqlstreamid = args[0].get('sqlstreamid')
 
