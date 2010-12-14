@@ -170,7 +170,6 @@ class AppControllerService(ServiceProcess):
                                    process=self)
         yield recv.initialize()   # creates queue but does not listen
 
-    @defer.inlineCallbacks
     def request_sqlstream(self, queue_name, op_unit_id=None):
         """
         Requests a SQLStream operational unit to be created, or an additional SQLStream on an exiting operational unit.
@@ -227,11 +226,10 @@ class AppControllerService(ServiceProcess):
                                                            'state': {} }
 
         if direct_request == True:
-            yield self._start_sqlstream(op_unit_id, stream_conf)
+            self._start_sqlstream(op_unit_id, stream_conf)
         else:
-            yield self.request_reconfigure()
+            self.request_reconfigure()
 
-    @defer.inlineCallbacks
     def request_reconfigure(self):
         """
         Requests a reconfiguration from the Decision Engine. This takes care of provisioning
@@ -261,14 +259,13 @@ class AppControllerService(ServiceProcess):
 
         print json.dumps(conf)
 
-        yield self.epu_controller_client.reconfigure(conf)
+        self.epu_controller_client.reconfigure(conf)
 
-    @defer.inlineCallbacks
     def _recv_data(self, data, msg):
         #log.info("<-- data packet" + msg.headers.__str__())
         log.info("data " + self.counter.__str__())
         self.counter += 1
-        yield msg.ack()
+        msg.ack()
 
     def has_station_binding(self, station_name):
         """
@@ -320,13 +317,12 @@ class AppControllerService(ServiceProcess):
                                         'proc_id': proc_id,
                                         'sqlstreams':sqlstreams})
 
-    @defer.inlineCallbacks
     def _start_sqlstream(self, op_unit_id, conf):
         """
         Tells an op unit to start a SQLStream instance.
         """
         proc_id = self.workers[op_unit_id]['proc_id']
-        yield self.rpc_send(proc_id, 'start_sqlstream', conf)
+        self.rpc_send(proc_id, 'start_sqlstream', conf)
 
     def _get_sql_def(self, **kwargs):
         """
@@ -365,7 +361,6 @@ class AppControllerService(ServiceProcess):
         #defs = t.substitute(kwargs)
         #return defs
 
-    @defer.inlineCallbacks
     def op_set_sql_defs(self, content, headers, msg):
         """
         Updates the current cached SQL defs for the SQLStream detection application.
@@ -392,7 +387,7 @@ class AppControllerService(ServiceProcess):
         is an example user of that replacement method.
         """
         self.prov_vars['sqldefs'] = content['content']
-        yield self.reply_ok(msg, {'value':'ok'}, {})
+        self.reply_ok(msg, {'value':'ok'}, {})
 
 #
 #
@@ -423,7 +418,6 @@ class AppAgent(Process):
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
 
-    #@defer.inlineCallbacks
     def plc_init(self):
         self.target = self.get_scoped_name('system', "app_controller")
 
@@ -556,7 +550,6 @@ class AppAgent(Process):
         content = self._get_opunit_status()
         return self.rpc_send(self.target, 'opunit_status', content)
 
-    @defer.inlineCallbacks
     def op_start_sqlstream(self, content, headers, msg):
         """
         Begins the process of starting and configuring a SQLStream instance on this op unit.
@@ -583,9 +576,8 @@ class AppAgent(Process):
         else:
             resp = { 'response':'ok' }
 
-        yield self.reply_ok(msg, resp, {})
+        self.reply_ok(msg, resp, {})
 
-    #@defer.inlineCallbacks
     def start_sqlstream(self, ssid, inp_queue, sql_defs):
         """
         Returns a deferred you can yield on. When finished, the sqlstream should be up
@@ -662,7 +654,6 @@ class AppAgent(Process):
 
         self.opunit_status() # report
 
-    #@defer.inlineCallbacks
     def _sqlstream_ended(self, result, *args):
         """
         SQLStream daemon has ended.
@@ -671,11 +662,10 @@ class AppAgent(Process):
         log.debug("SQLStream (%s) has ended" % ssid)
         self.sqlstreams[ssid].pop('serverproc', None)
 
-        # TODO: update appcontroller
+        self.sqlstreams[ssid]['state'] = 'stopped'
 
-        #defer.returnValue(None)
+        self.opunit_status()
 
-    #@defer.inlineCallbacks
     def _sqlstream_started(self, result, *args, **kwargs):
         """
         SQLStream daemon has started.
@@ -685,7 +675,6 @@ class AppAgent(Process):
 
         return result   # pass result down the chain
 
-    @defer.inlineCallbacks
     def op_ctl_sqlstream(self, content, headers, msg):
         """
         Instructs a SQLStream to perform an operation like start or stop its pumps.
@@ -698,12 +687,12 @@ class AppAgent(Process):
         if content['action'] == 'pumps_on':
             proc_pumpson = self.get_pumps_on_proc(content['sqlstreamid'])
             proc_pumpson.addCallback(self._pumps_on_callback, sqlstreamid=content['sqlstreamid'])
-            yield proc_pumpson.spawn()  # TODO: could never return!
+            proc_pumpson.spawn()
 
         elif content['action'] == 'pumps_off':
             proc_pumpsoff = self.get_pumps_off_proc(content['sqlstreamid'])
             proc_pumpsoff.addCallback(self._pumps_off_callback, sqlstreamid=content['sqlstreamid'])
-            yield proc_pumpsoff.spawn()  # TODO: could never return!
+            proc_pumpsoff.spawn()
 
     def get_pumps_on_proc(self, sqlstreamid):
         """
@@ -739,7 +728,6 @@ class AppAgent(Process):
         # update status on controller
         self.opunit_status()
 
-    #@defer.inlineCallbacks
     def get_pumps_off_proc(self, sqlstreamid):
         """
         Builds an OSProcess to nstructs the given SQLStream worker to turn its pumps off.
@@ -932,7 +920,6 @@ class OSSSServerProcess(OSProcess):
         else:
             self.transport.write('!kill\n')
 
-    #@defer.inlineCallbacks
     def outReceived(self, data):
         OSProcess.outReceived(self, data)
         if (SSD_READY_STRING in data):
