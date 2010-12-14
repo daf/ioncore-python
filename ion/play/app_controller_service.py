@@ -379,31 +379,6 @@ class AppControllerService(ServiceProcess):
         self.prov_vars['sqldefs'] = content['content']
         yield self.reply_ok(msg, {'value':'ok'}, {})
 
-    @defer.inlineCallbacks
-    def op_sqlstream_ready(self, content, headers, msg):
-        """
-        A worker has indicated a SQLStream is ready.
-        When we receive this message, we tell the SQLStream to turn its pumps on.
-        """
-        log.info("SQLStream reports as ready: %s" % str(content))
-        yield self.reply_ok(msg, {'value': 'ok'}, {})
-
-        # save knowledge of this sqlstream on this worker
-        self.workers[content['id']]['sqlstreams'][content['sqlstreamid']] = {'queue_name':content['queue_name'], 'status':'ready'}
-
-        # tell it to turn the pumps on
-        yield self.rpc_send(content['id'], 'ctl_sqlstream', {'sqlstreamid':content['sqlstreamid'],'action':'pumps_on'})
-
-    @defer.inlineCallbacks
-    def op_sqlstream_status(self, content, headers, msg):
-        """
-        Status message recieved from agent to indicate what's happening with a SQLStream instance.
-        """
-        log.info("SQLStream status report: %s for SS# %d on %s" % (content['status'], content['sqlstreamid'], content['id']))
-
-        self.workers[content['id']]['sqlstreams'][content['sqlstreamid']]['status'] = content['status']
-        yield self.reply_ok(msg, {'value': 'ok'})
-
 #
 #
 # ########################################################
@@ -746,12 +721,12 @@ class AppAgent(Process):
 
         if result['exitcode'] == 0:
             self.sqlstreams[sqlstreamid]['state'] = 'running'
-
-            # call app controller to let it know status
-            yield self.send_controller_rpc('sqlstream_status', sqlstreamid=sqlstreamid, status='running')
         else:
-            log.warning("Could not turn pumps on for %s, SS # %d" % (self.id.full, sqlstreamid))
-            # TODO: inform app controller?
+            self.sqlstreams[sqlstreamid]['state'] = 'error'
+            log.warning("Could not turn pumps on for %s, SS # %d" % (self.opunit_id, sqlstreamid))
+
+        # update status on controller
+        yield self.opunit_status()
 
     #@defer.inlineCallbacks
     def get_pumps_off_proc(self, sqlstreamid):
@@ -785,11 +760,12 @@ class AppAgent(Process):
         
         if result['exitcode'] == 0:
             self.sqlstreams[sqlstreamid]['state'] = 'stopped'
-
-            # let app controller know status
-            yield self.send_controller_rpc('sqlstream_status', sqlstreamid=sqlstreamid, status='stopped')
         else:
+            self.sqlstreams[sqlstreamid]['state'] = 'error'
             log.warning("Could not turn pumps off for %s, SS # %d" % (self.id.full, sqlstreamid))
+
+        # update status on controller
+        yield self.opunit_status()
 
     @defer.inlineCallbacks
     def send_controller_rpc(self, operation, **kwargs):
