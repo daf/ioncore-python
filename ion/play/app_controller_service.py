@@ -49,6 +49,8 @@ SSD_READY_STRING = "Server ready; enter"
 SSD_BIN = "bin/SQLstreamd"
 SSC_BIN = "bin/sqllineClient" 
 
+DEBUG_WRITE_PROV_JSON=False     # TODO: config file
+
 # TODO: deployables
 SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
 SS_SEISMIC_JAR = "/usr/local/seismic/lib/ucsd-seismic.jar"
@@ -262,7 +264,11 @@ class AppControllerService(ServiceProcess):
                 ssdefs.append( { 'ssid'      : ssinfo['conf']['ssid'],
                                  'sqlt_vars' : ssinfo['conf']['sqlt_vars'] } )
 
-        print json.dumps(conf)
+        if DEBUG_WRITE_PROV_JSON:
+            print json.dumps(conf)
+            f = open('/tmp/prov.json', 'w')
+            json.dump(conf, f)
+            f.close()
 
         self.epu_controller_client.reconfigure(conf)
 
