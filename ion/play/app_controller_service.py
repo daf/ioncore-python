@@ -69,12 +69,21 @@ class AppControllerService(ServiceProcess):
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
         self.unboundqueues = [] # list of queues waiting to be assigned to sqlstreams (op unit is starting up)
 
+        # get connection details to broker
+        cnfgsrc = self.container.exchange_manager.exchange_space.message_space.connection
+        broker_config = { 'server_host'     : cnfgsrc.hostname,
+                          'server_port'     : cnfgsrc.port,
+                          'server_user'     : cnfgsrc.userid,
+                          'server_password' : cnfgsrc.password,
+                          'server_vhost'    : cnfgsrc.virtual_host }
+
         # provisioner vars are common vars for all worker instances
         self.prov_vars = { 'sqldefs'   : None,        # cached copy of SQLStream SQL definition templates from disk
-                           'sqlt_vars' : { 'server_host'  : 'localhost',
-                                           'inp_exchange' : EXCHANGE_NAME,
+                           'sqlt_vars' : { 'inp_exchange' : EXCHANGE_NAME,
                                            'det_topic'    : DETECTION_TOPIC,
                                            'det_exchange' : EXCHANGE_NAME } }
+
+        self.prov_vars['sqlt_vars'].update(broker_config)
 
     @defer.inlineCallbacks
     def slc_init(self):

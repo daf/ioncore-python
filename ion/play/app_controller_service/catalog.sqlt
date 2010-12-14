@@ -23,8 +23,8 @@ CREATE OR REPLACE FOREIGN DATA WRAPPER "AmqpWrapper"
 CREATE OR REPLACE SERVER "AMQPServer"
     FOREIGN DATA WRAPPER "AmqpWrapper"
     OPTIONS (
-        HOST '${server_host}', VHOST '/'
-        -- USERNAME 'guest', PASSWORD 'guest'
+        HOST '${server_host}', VHOST '${server_vhost}', PORT '${server_port}',
+        USERNAME '${server_user}', PASSWORD '${server_password}'
     );
 
 -- subscribe to raw signal messages, as a stream
