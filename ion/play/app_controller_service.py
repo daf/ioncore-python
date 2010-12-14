@@ -549,14 +549,12 @@ class AppAgent(Process):
         status = self._get_opunit_status()
         self.reply_ok(msg, status, {})
 
-    @defer.inlineCallbacks
     def opunit_status(self):
         """
         Sends the current status of this Agent/Op Unit.
         """
         content = self._get_opunit_status()
-
-        yield self.send_controller_rpc('opunit_status', **content)
+        return self.rpc_send(self.target, 'opunit_status', content)
 
     @defer.inlineCallbacks
     def op_start_sqlstream(self, content, headers, msg):
@@ -724,7 +722,6 @@ class AppAgent(Process):
 
         return proc_pumpson
 
-    @defer.inlineCallbacks
     def _pumps_on_callback(self, result, *args):
         log.debug("Pumps on returned: %d" % result['exitcode'])
         
@@ -740,7 +737,7 @@ class AppAgent(Process):
             log.warning("Could not turn pumps on for %s, SS # %d" % (self.opunit_id, sqlstreamid))
 
         # update status on controller
-        yield self.opunit_status()
+        self.opunit_status()
 
     #@defer.inlineCallbacks
     def get_pumps_off_proc(self, sqlstreamid):
@@ -762,7 +759,6 @@ class AppAgent(Process):
 
         return proc_pumpsoff
     
-    @defer.inlineCallbacks
     def _pumps_off_callback(self, result, *args):
         log.debug("Pumps off returned: %d" % result['exitcode'])
 
@@ -778,19 +774,7 @@ class AppAgent(Process):
             log.warning("Could not turn pumps off for %s, SS # %d" % (self.id.full, sqlstreamid))
 
         # update status on controller
-        yield self.opunit_status()
-
-    @defer.inlineCallbacks
-    def send_controller_rpc(self, operation, **kwargs):
-        """
-        Wrapper to make rpc calls a bit easier. Builds standard info into content message like
-        our id.
-        """
-        content = {'proc_id':self.id.full}
-        content.update(kwargs)
-
-        ret = yield self.rpc_send(self.target, operation, content, {}, **kwargs)
-        defer.returnValue(ret)
+        self.opunit_status()
 
 #
 #
