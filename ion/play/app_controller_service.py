@@ -18,6 +18,7 @@ from twisted.internet import defer, reactor, protocol
 
 from ion.core.process.process import ProcessFactory, Process
 from ion.core.process.service_process import ServiceProcess, ServiceClient
+from ion.services.coi.attributestore import AttributeStoreClient
 from ion.core.messaging import messaging
 from ion.core.messaging.receiver import Receiver
 from ion.services.cei.epucontroller import PROVISIONER_VARS_KEY
@@ -26,8 +27,6 @@ from ion.util.task_chain import TaskChain
 from ion.util.os_process import OSProcess
 
 import uuid
-import zlib
-import base64
 import pprint
 
 try:
@@ -43,6 +42,7 @@ except:
 
 STATIONS_PER_QUEUE = 2
 CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
+SQLTDEFS_KEY = 'anf.seismic.sqltdefs' # the key to use in the store for sqlt defs
 EXCHANGE_NAME = "magnet.topic"
 DETECTION_TOPIC = "anf.detections"
 SSD_READY_STRING = "Server ready; enter"
@@ -62,14 +62,13 @@ class AppControllerService(ServiceProcess):
 
     declare = ServiceProcess.service_declare(name = "app_controller",
                                              version = "0.1.0",
-                                             dependencies=[])
+                                             dependencies=["attributestore"])
 
     def __init__(self, *args, **kwargs):
         ServiceProcess.__init__(self, *args, **kwargs)
 
         self.routing = {}   # mapping of queues to a list of bindings (station ids/sensor ids)
         self.workers = {}   # mapping of known worker vms to info about those vms (cores / running instances)
-        self.unboundqueues = [] # list of queues waiting to be assigned to sqlstreams (op unit is starting up)
 
         # get connection details to broker
         cnfgsrc = self.container.exchange_manager.exchange_space.message_space.connection
@@ -80,8 +79,7 @@ class AppControllerService(ServiceProcess):
                           'server_vhost'    : cnfgsrc.virtual_host }
 
         # provisioner vars are common vars for all worker instances
-        self.prov_vars = { 'sqldefs'   : None,        # cached copy of SQLStream SQL definition templates from disk
-                           'sqlt_vars' : { 'inp_exchange' : EXCHANGE_NAME,
+        self.prov_vars = { 'sqlt_vars' : { 'inp_exchange' : EXCHANGE_NAME,
                                            'det_topic'    : DETECTION_TOPIC,
                                            'det_exchange' : EXCHANGE_NAME } }
 
@@ -115,6 +113,9 @@ class AppControllerService(ServiceProcess):
         #self.counter = 0
 
         self.epu_controller_client = EPUControllerClient()
+
+        self.attribute_store_client = AttributeStoreClient()
+        yield self._load_sql_def()
 
     @defer.inlineCallbacks
     def _recv_announce(self, data, msg):
@@ -247,9 +248,6 @@ class AppControllerService(ServiceProcess):
 
         # TODO: likely does not need to send prov vars every time as this is reconfigure
 
-        # update the sqldefs just in case they have changed via operation
-        self._get_sql_def()
-
         provvars = self.prov_vars.copy()
         #provvars['sqldefs'] = provvars['sqldefs'].replace("$", "$$")    # escape template vars once so it doesn't get clobbered in provisioner replacement
 
@@ -335,8 +333,12 @@ class AppControllerService(ServiceProcess):
         proc_id = self.workers[op_unit_id]['proc_id']
         self.rpc_send(proc_id, 'start_sqlstream', conf)
 
-    def _get_sql_def(self, **kwargs):
+    def _load_sql_def(self):
         """
+        Loads SQL Templates from disk and puts them in a store.
+        Called at startup.
+
+        XXX fix:
         Gets SQLStream detection application SQL definitions, either from
         disk or in memory. SQL files stored on disk are loaded once and stored
         in memory after they have been translated through string.Template.
@@ -346,31 +348,15 @@ class AppControllerService(ServiceProcess):
         in memory defs. They are expected to be templates, in which certain vars will be
         updated. See op_set_sql_defs for more information.
         """
-        #inp_queue, inp_exchange, out_queue, out_exchange, nostore=False):
-        nostore = kwargs.pop('nostore', False)
+        fulltemplatelist = []
+        for filename in ["catalog.sqlt", "funcs.sqlt", "detections.sqlt", "validate.sqlt"]:
+            f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
+            fulltemplatelist.extend(f.readlines())
+            f.close()
 
-        if self.prov_vars['sqldefs'] != None:
-            fulltemplate = self.prov_vars['sqldefs']
-        else:
-            fulltemplatelist = []
-            for filename in ["catalog.sqlt", "funcs.sqlt", "detections.sqlt", "validate.sqlt"]:
-                f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
-                fulltemplatelist.extend(f.readlines())
-                f.close()
+        fulltemplate = "\n".join(fulltemplatelist)
 
-            fulltemplate = "\n".join(fulltemplatelist)
-
-            if not nostore:
-                fullcompressed = zlib.compress(fulltemplate)
-                self.prov_vars['sqldefs'] = base64.b64encode(fullcompressed)
-
-        # NO LONGER SUBSTITUTES - THE AGENT DOES THIS NOW
-        return fulltemplate
-
-        # template replace fulltemplates with kwargs
-        #t = string.Template(fulltemplate)
-        #defs = t.substitute(kwargs)
-        #return defs
+        self.attribute_store_client.put(SQLTDEFS_KEY, json.dumps(fulltemplate))
 
     def op_set_sql_defs(self, content, headers, msg):
         """
@@ -392,13 +378,10 @@ class AppControllerService(ServiceProcess):
 
         If these variables are not present, no error is thrown - it will use whatever you
         gave it. So your updated SQL definitions may hardcode the variables above.
-
-        Variable substitution is done by calling self._get_sql_def and passing appropriate
-        replacement variables via keyword arguments to the method. self._start_sqlstream
-        is an example user of that replacement method.
         """
-        self.prov_vars['sqldefs'] = content['content']
-        self.reply_ok(msg, {'value':'ok'}, {})
+        defs = content['content']
+        self.attribute_store_client.put(SQLTDEFS_KEY, json.dumps(defs))
+        self.reply_ok(msg, { 'value': 'ok'}, {})
 
 #
 #
@@ -429,16 +412,11 @@ class AppAgent(Process):
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
 
+    @defer.inlineCallbacks
     def plc_init(self):
         self.target = self.get_scoped_name('system', "app_controller")
 
-        defs = self.spawn_args.get('sqldefs')   # SHOULD ALWAYS HAVE THIS IN SPAWN ARGS
-        if defs:
-            # uncompress defs
-            compdefs = base64.b64decode(defs)
-            uncompresseddefs = zlib.decompress(compdefs)
-
-            self._sqldefs = uncompresseddefs
+        self.attribute_store_client = AttributeStoreClient()
 
         # check spawn args for sqlstreams, start them up as appropriate
         # expect a stringify'd python array of dicts
@@ -448,7 +426,7 @@ class AppAgent(Process):
             for ssinfo in sqlstreams:
                 ssid = ssinfo['ssid']
                 inp_queue = ssinfo['sqlt_vars']['inp_queue']
-                defs = self._get_sql_defs(uconf=ssinfo['sqlt_vars'])
+                defs = yield self._get_sql_defs(uconf=ssinfo['sqlt_vars'])
 
                 self.start_sqlstream(ssid, inp_queue, defs)
 
@@ -501,7 +479,7 @@ class AppAgent(Process):
         Returns a fully substituted SQLStream SQL definition string.
         Using keyword arguments, you can update the default params passed in to spawn args.
         """
-        assert self.spawn_args.has_key('sqlt_vars') and self._sqldefs, "Required SQL definitions and substitution vars have not been set yet."
+        assert self.spawn_args.has_key('sqlt_vars'), "Required SQL substitution vars have not been set yet."
 
         conf = self.spawn_args['sqlt_vars'].copy()
         conf.update(uconf)
@@ -509,7 +487,10 @@ class AppAgent(Process):
 
         defs = sqldefs
         if defs == None:
-            defs = self._sqldefs
+            # no defs passed here, pull from attribute store
+            defs = self.attribute_store_client.get(SQLTDEFS_KEY)
+
+        assert defs != None and len(defs) > 0, "No definitions found!"
 
         template = string.Template(defs)
         return template.substitute(conf)
