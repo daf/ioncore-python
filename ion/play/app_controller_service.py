@@ -45,6 +45,7 @@ INP_EXCHANGE_NAME   = CONF.getValue('INP_EXCHANGE_NAME', 'magnet.topic')
 OUT_EXCHANGE_NAME   = CONF.getValue('OUT_EXCHANGE_NAME', 'magnet.topic')
 DETECTION_TOPIC     = CONF.getValue('DETECTION_TOPIC',   'anf.detections')
 STATIONS_PER_QUEUE  = CONF.getValue('STATIONS_PER_QUEUE', 2)
+ANNOUNCE_QUEUE      = CONF.getValue('ANNOUNCE_QUEUE',    'instrument_announce')
 
 SQLTDEFS_KEY = 'anf.seismic.sqltdefs' # the key to use in the store for sqlt defs
 CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
@@ -92,24 +93,21 @@ class AppControllerService(ServiceProcess):
     def slc_init(self):
         # Service life cycle state.
 
-        # instrument announcement queue name
-        self.announce_queue = "instrument_announce"
-
         # consume the announcement queue
-        self.announce_recv = TopicWorkerReceiver(name=self.announce_queue,
-                                            scope='global',
-                                            process=self,
-                                            handler=self._recv_announce)
+        self.announce_recv = TopicWorkerReceiver(name=ANNOUNCE_QUEUE,
+                                                 scope='global',
+                                                 process=self,
+                                                 handler=self._recv_announce)
 
         # declares queue and starts listening on it
         yield self.announce_recv.attach()
 
         # get topic based routing to all sensor data (for anything missed on the announcement queue)
-        self.all_data_recv = TopicWorkerReceiver(name="ta_alldata",
-                                                 scope='global',
-                                                 binding_key = "ta.*.BHZ",
-                                                 process=self,
-                                                 handler=self._recv_data)
+        #self.all_data_recv = TopicWorkerReceiver(name="ta_alldata",
+        #                                         scope='global',
+        #                                         binding_key = "ta.*.BHZ",
+        #                                         process=self,
+        #                                         handler=self._recv_data)
 
         #yield self.all_data_recv.attach()
         #yield self.all_data_recv.initialize()
@@ -120,7 +118,6 @@ class AppControllerService(ServiceProcess):
         self.attribute_store_client = AttributeStoreClient()
         yield self._load_sql_def()
 
-    @defer.inlineCallbacks
     def _recv_announce(self, data, msg):
         """
         Received an instrument announcement. Set up a binding for it.
@@ -135,9 +132,15 @@ class AppControllerService(ServiceProcess):
         if found:
             log.error("Duplicate announcement")
         else:
-            yield self.bind_station(station_name)
+            self.bind_station(station_name)
 
-        yield msg.ack()
+        msg.ack()
+
+    #def _recv_data(self, data, msg):
+    #    #log.info("<-- data packet" + msg.headers.__str__())
+    #    log.info("data " + self.counter.__str__())
+    #    self.counter += 1
+    #    msg.ack()
 
     @defer.inlineCallbacks
     def bind_station(self, station_name, queue_name = None):
@@ -272,12 +275,6 @@ class AppControllerService(ServiceProcess):
             f.close()
 
         self.epu_controller_client.reconfigure(conf)
-
-    def _recv_data(self, data, msg):
-        #log.info("<-- data packet" + msg.headers.__str__())
-        log.info("data " + self.counter.__str__())
-        self.counter += 1
-        msg.ack()
 
     def has_station_binding(self, station_name):
         """
