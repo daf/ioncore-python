@@ -40,11 +40,14 @@ try:
 except:
     import simplejson as json
 
-STATIONS_PER_QUEUE = 2
-CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
+CONF = ioninit.config(__name__)
+INP_EXCHANGE_NAME   = CONF.getValue('INP_EXCHANGE_NAME', 'magnet.topic')
+OUT_EXCHANGE_NAME   = CONF.getValue('OUT_EXCHANGE_NAME', 'magnet.topic')
+DETECTION_TOPIC     = CONF.getValue('DETECTION_TOPIC',   'anf.detections')
+STATIONS_PER_QUEUE  = CONF.getValue('STATIONS_PER_QUEUE', 2)
+
 SQLTDEFS_KEY = 'anf.seismic.sqltdefs' # the key to use in the store for sqlt defs
-EXCHANGE_NAME = "magnet.topic"
-DETECTION_TOPIC = "anf.detections"
+CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
 SSD_READY_STRING = "Server ready; enter"
 SSD_BIN = "bin/SQLstreamd"
 SSC_BIN = "bin/sqllineClient" 
@@ -79,9 +82,9 @@ class AppControllerService(ServiceProcess):
                           'server_vhost'    : cnfgsrc.virtual_host }
 
         # provisioner vars are common vars for all worker instances
-        self.prov_vars = { 'sqlt_vars' : { 'inp_exchange' : EXCHANGE_NAME,
+        self.prov_vars = { 'sqlt_vars' : { 'inp_exchange' : INP_EXCHANGE_NAME,
                                            'det_topic'    : DETECTION_TOPIC,
-                                           'det_exchange' : EXCHANGE_NAME } }
+                                           'det_exchange' : OUT_EXCHANGE_NAME } }
 
         self.prov_vars['sqlt_vars'].update(broker_config)
 
