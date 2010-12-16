@@ -50,7 +50,7 @@ SQLTDEFS_KEY = 'anf.seismic.sqltdefs' # the key to use in the store for sqlt def
 CORES_PER_SQLSTREAM = 2     # SQLStream instances use 2 cores each: a 4 core machine can handle 2 instances
 SSD_READY_STRING = "Server ready; enter"
 SSD_BIN = "bin/SQLstreamd"
-SSC_BIN = "bin/sqllineClient" 
+SSC_BIN = "bin/sqllineClient"
 
 DEBUG_WRITE_PROV_JSON=False     # TODO: config file
 
@@ -91,7 +91,7 @@ class AppControllerService(ServiceProcess):
     @defer.inlineCallbacks
     def slc_init(self):
         # Service life cycle state.
-        
+
         # instrument announcement queue name
         self.announce_queue = "instrument_announce"
 
@@ -100,7 +100,7 @@ class AppControllerService(ServiceProcess):
                                             scope='global',
                                             process=self,
                                             handler=self._recv_announce)
-        
+
         # declares queue and starts listening on it
         yield self.announce_recv.attach()
 
@@ -131,14 +131,14 @@ class AppControllerService(ServiceProcess):
         log.info("Instrument Station Announce: " + station_name)
 
         found = self.has_station_binding(station_name)
-        
+
         if found:
             log.error("Duplicate announcement")
         else:
             yield self.bind_station(station_name)
 
         yield msg.ack()
-    
+
     @defer.inlineCallbacks
     def bind_station(self, station_name, queue_name = None):
         """
@@ -148,7 +148,7 @@ class AppControllerService(ServiceProcess):
         """
         if queue_name == None:
             queue_name = "W%s" % (len(self.routing.keys()) + 1)
-             
+
             # find a queue with enough room
             added = False
             for queues in self.routing.keys():
@@ -164,9 +164,9 @@ class AppControllerService(ServiceProcess):
         if not self.routing.has_key(queue_name):
             self.routing[queue_name] = []
             self.request_sqlstream(queue_name)
-            
+
         self.routing[queue_name].append(station_name)
-        
+
         log.info("Created binding %s to queue %s" % (binding_key, queue_name))
 
     @defer.inlineCallbacks
@@ -196,7 +196,7 @@ class AppControllerService(ServiceProcess):
 
         if op_unit_id != None and not self.workers.has_key(op_unit_id):
             log.error("request_sqlstream: op_unit (%s) requested but unknown" % op_unit_id)
-        
+
         if op_unit_id == None:
             # find an available op unit
             for (worker,info) in self.workers.items():
@@ -451,7 +451,7 @@ class AppAgent(Process):
         for sinfo in self.sqlstreams.values():
             if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
                 dl.append(self.kill_sqlstream(sinfo['ssid']))
-        
+
         deflist = defer.DeferredList(dl)
         return deflist
 
@@ -708,7 +708,7 @@ class AppAgent(Process):
 
     def _pumps_on_callback(self, result, *args):
         log.debug("Pumps on returned: %d" % result['exitcode'])
-        
+
         sqlstreamid = args[0].get('sqlstreamid')
 
         # remove ref to proc
@@ -741,7 +741,7 @@ class AppAgent(Process):
         proc_pumpsoff = OSSSClientProcess(spawnargs=[sdpport], binroot=binroot, sqlcommands=sql_cmd)
 
         return proc_pumpsoff
-    
+
     def _pumps_off_callback(self, result, *args):
         log.debug("Pumps off returned: %d" % result['exitcode'])
 
@@ -749,7 +749,7 @@ class AppAgent(Process):
 
         # remove ref to proc
         self.sqlstreams[sqlstreamid].pop('proc', None)
-        
+
         if result['exitcode'] == 0:
             self.sqlstreams[sqlstreamid]['state'] = 'stopped'
         else:
@@ -780,7 +780,7 @@ class TopicWorkerReceiver(Receiver):
         Receiver.__init__(self, *args, **kwargs)
         if binding_key == None:
             binding_key = self.xname
-        
+
         self.binding_key = binding_key
 
     @defer.inlineCallbacks
@@ -825,7 +825,7 @@ class OSSSClientProcess(OSProcess):
         OSProcess.__init__(self, binary=binary, spawnargs=spawnargs, **kwargs)
 
         self.temp_file  = None
-    
+
     def spawn(self, binary=None, args=[]):
         """
         Spawns the sqllineClient process.
@@ -919,7 +919,7 @@ class OSSSServerProcess(OSProcess):
     def outReceived(self, data):
         OSProcess.outReceived(self, data)
         if (SSD_READY_STRING in data):
-            
+
             # must simulate processEnded callback value
             cba = { 'exitcode' : 0,
                     'outlines' : self.outlines,
@@ -932,7 +932,7 @@ class OSSSServerProcess(OSProcess):
         # Process ended override.
         # This override is to signal ready deferred if we never did, just in case.
         if self.ready_deferred and not self.ready_deferred.called:
-            
+
             # must simulate processEnded callback value
             cba = { 'exitcode' : 0,
                     'outlines' : self.outlines,
