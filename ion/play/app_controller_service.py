@@ -446,7 +446,7 @@ class AppAgent(Process):
     def kill_sqlstreams(self):
         dl = []
         for sinfo in self.sqlstreams.values():
-            if sinfo.has_key('serverproc') and sinfo['serverproc'] != None:
+            if sinfo.has_key('_serverproc') and sinfo['_serverproc'] != None:
                 dl.append(self.kill_sqlstream(sinfo['ssid']))
 
         deflist = defer.DeferredList(dl)
@@ -461,19 +461,20 @@ class AppAgent(Process):
         chain = TaskChain()
         if self.sqlstreams[ssid]['state'] == 'running':
             chain.append(self.get_pumps_off_proc(ssid).spawn)
-        chain.append((self.sqlstreams[ssid]['serverproc'].close, [], { 'timeout':30 }))
+        chain.append((self.sqlstreams[ssid]['_serverproc'].close, [], { 'timeout':30 }))
         chain.append((shutil.rmtree, [self.sqlstreams[ssid]['dirname']]))
         return chain.run()
 
     def kill_sqlstream_clients(self):
         dl = []
         for sinfo in self.sqlstreams.values():
-            if sinfo.has_key('taskchain') and sinfo['taskchain'] != None:
-                dl.append(sinfo['taskchain'].close())
+            if sinfo.has_key('_taskchain') and sinfo['_taskchain'] != None:
+                dl.append(sinfo['_taskchain'].close())
 
         deflist = defer.DeferredList(dl)
         return deflist
 
+    @defer.inlineCallbacks
     def _get_sql_defs(self, sqldefs=None, uconf={}, **kwargs):
         """
         Returns a fully substituted SQLStream SQL definition string.
@@ -488,12 +489,13 @@ class AppAgent(Process):
         defs = sqldefs
         if defs == None:
             # no defs passed here, pull from attribute store
-            defs = self.attribute_store_client.get(SQLTDEFS_KEY)
+            defs = yield self.attribute_store_client.get(SQLTDEFS_KEY)
 
         assert defs != None and len(defs) > 0, "No definitions found!"
 
         template = string.Template(defs)
-        return template.substitute(conf)
+
+        defer.returnValue(template.substitute(conf))
 
     def _get_cores(self):
         """
@@ -523,8 +525,19 @@ class AppAgent(Process):
         status = { 'id'          : self._opunit_id,
                    'proc_id'     : self.id.full,
                    'metrics'     : self.metrics,
-                   'sqlstreams'  : self.sqlstreams,
                    'state'       : 'temp' }
+
+        # filter out any private vars to the Agent inside of the sqlstream dict
+        # "private" vars start with _ in the key name
+        sqlstreams = {}
+        for ssid,sinfo in self.sqlstreams.items():
+            sqlstreams[ssid] = {}
+            for k,v in sinfo.items():
+                if k[0:1] == "_":
+                    continue
+                sqlstreams[ssid][k] = v
+
+        status['sqlstreams'] = sqlstreams
 
         return status
 
@@ -542,6 +555,7 @@ class AppAgent(Process):
         content = self._get_opunit_status()
         return self.rpc_send(self.target, 'opunit_status', content)
 
+    @defer.inlineCallbacks
     def op_start_sqlstream(self, content, headers, msg):
         """
         Begins the process of starting and configuring a SQLStream instance on this op unit.
@@ -552,7 +566,7 @@ class AppAgent(Process):
 
         ssid        = content['ssid']
         sqlt_vars   = content['sqlt_vars']
-        defs        = self._get_sql_defs(uconf=sqlt_vars)
+        defs        = yield self._get_sql_defs(uconf=sqlt_vars)
         failed      = False
         ex          = None
 
@@ -568,7 +582,7 @@ class AppAgent(Process):
         else:
             resp = { 'response':'ok' }
 
-        self.reply_ok(msg, resp, {})
+        yield self.reply_ok(msg, resp, {})
 
     def start_sqlstream(self, ssid, inp_queue, sql_defs):
         """
@@ -611,7 +625,7 @@ class AppAgent(Process):
         proc_server = OSSSServerProcess(binroot=dirname)
         proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
         proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
-        self.sqlstreams[ssid]['serverproc'] = proc_server   # store it here, it still runs
+        self.sqlstreams[ssid]['_serverproc'] = proc_server   # store it here, it still runs
         chain.append(proc_server.spawn)
 
         # 3. Load definitions
@@ -652,7 +666,7 @@ class AppAgent(Process):
         """
         ssid = args[0].get('sqlstreamid')
         log.debug("SQLStream (%s) has ended" % ssid)
-        self.sqlstreams[ssid].pop('serverproc', None)
+        self.sqlstreams[ssid].pop('_serverproc', None)
 
         self.sqlstreams[ssid]['state'] = 'stopped'
 
