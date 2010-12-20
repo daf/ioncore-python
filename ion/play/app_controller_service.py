@@ -17,6 +17,7 @@ log = ion.util.ionlog.getLogger(__name__)
 from twisted.internet import defer, reactor, protocol
 
 from ion.core.process.process import ProcessFactory, Process
+from ion.util.state_object import BasicStates
 from ion.core.process.service_process import ServiceProcess, ServiceClient
 from ion.services.coi.attributestore import AttributeStoreClient
 from ion.core.messaging import messaging
@@ -431,7 +432,8 @@ class AppAgent(Process):
                 self.start_sqlstream(ssid, inp_queue, defs)
 
         # let controller know we're starting and have some sqlstreams starting, possibly
-        self.opunit_status()
+        # we call later in order to let it transition out of init state
+        reactor.callLater(0, self.opunit_status)
 
     @defer.inlineCallbacks
     def plc_terminate(self):
@@ -442,6 +444,7 @@ class AppAgent(Process):
         """
         yield self.kill_sqlstream_clients()  # kill clients first, they prevent sqlstream daemons from shutting down
         yield self.kill_sqlstreams()
+        yield self.opunit_status(BasicStates.S_TERMINATED)
 
     def kill_sqlstreams(self):
         dl = []
@@ -517,15 +520,21 @@ class AppAgent(Process):
         else:
             return multiprocessing.cpu_count()
 
-    def _get_opunit_status(self):
+    def _get_opunit_status(self, cur_state=None):
         """
         Builds this Agent's status.
-        @returns A dict containing status.
+        @param cur_state    The current state that should be reported. Expected to be
+                            any state of the BasicLifecycleObject states. If left blank,
+                            uses the current process' state. This param is used for when
+                            reporting state from a state transition method, such as
+                            plc_terminate, and that state hasn't taken effect yet, but
+                            we want to report as such.
+        @returns            A dict containing status.
         """
         status = { 'id'          : self._opunit_id,
                    'proc_id'     : self.id.full,
                    'metrics'     : self.metrics,
-                   'state'       : 'temp' }
+                   'state'       : cur_state or self._StateObject__fsm.current_state }
 
         # filter out any private vars to the Agent inside of the sqlstream dict
         # "private" vars start with _ in the key name
@@ -548,11 +557,11 @@ class AppAgent(Process):
         status = self._get_opunit_status()
         self.reply_ok(msg, status, {})
 
-    def opunit_status(self):
+    def opunit_status(self, cur_state=None):
         """
         Sends the current status of this Agent/Op Unit.
         """
-        content = self._get_opunit_status()
+        content = self._get_opunit_status(cur_state)
         return self.rpc_send(self.target, 'opunit_status', content)
 
     @defer.inlineCallbacks
