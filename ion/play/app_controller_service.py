@@ -356,7 +356,7 @@ class AppControllerService(ServiceProcess):
 
         fulltemplate = "\n".join(fulltemplatelist)
 
-        self.attribute_store_client.put(SQLTDEFS_KEY, json.dumps(fulltemplate))
+        self.attribute_store_client.put(SQLTDEFS_KEY, fulltemplate)
 
     def op_set_sql_defs(self, content, headers, msg):
         """
@@ -380,7 +380,7 @@ class AppControllerService(ServiceProcess):
         gave it. So your updated SQL definitions may hardcode the variables above.
         """
         defs = content['content']
-        self.attribute_store_client.put(SQLTDEFS_KEY, json.dumps(defs))
+        self.attribute_store_client.put(SQLTDEFS_KEY, defs)
         self.reply_ok(msg, { 'value': 'ok'}, {})
 
 #
