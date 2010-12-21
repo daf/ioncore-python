@@ -624,7 +624,8 @@ class AppAgent(Process):
                                  'state'        : 'starting',
                                  'inp_queue'    : inp_queue,
                                  'dirname'      : dirname,
-                                 'sql_defs'     : sql_defs}
+                                 'sql_defs'     : sql_defs,
+                                 '_task_chain'  : chain}
 
         # 1. Install SQLstream daemon
         proc_installer = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
@@ -656,6 +657,7 @@ class AppAgent(Process):
         log.info("SQLstream (%s) started" % ssid)
 
         self.sqlstreams[ssid]['state'] = 'running'
+        self.sqlstreams[ssid].pop('_task_chain')    # remove ref to chain
 
         self.opunit_status() # report
 
@@ -664,6 +666,7 @@ class AppAgent(Process):
         log.error('SQLstream (%s) startup ERROR - %s' % (ssid, str(failure)))
 
         self.sqlstreams[ssid]['state'] = 'error'
+        self.sqlstreams[ssid].pop('_task_chain')    # remove ref to chain TODO: keep for errors?
 
         failure.trap(StandardError)
 
