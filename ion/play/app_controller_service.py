@@ -17,6 +17,7 @@ log = ion.util.ionlog.getLogger(__name__)
 from twisted.internet import defer, reactor, protocol
 
 from ion.core.process.process import ProcessFactory, Process
+from ion.util.fsm import FSM
 from ion.util.state_object import BasicStates
 from ion.core.process.service_process import ServiceProcess, ServiceClient
 from ion.services.coi.attributestore import AttributeStoreClient
@@ -390,6 +391,170 @@ class AppControllerService(ServiceProcess):
 #
 #
 
+class AsyncFSM(FSM):
+    """
+    A FSM derivative that performs its actions associated with state transitions asynchronously.
+
+    The AsyncFSM does not change its state until the action calls back succesfully.
+    The action need not return a deferred, it is wrapped in defer.maybeDeferred.
+    """
+
+    def process(self, input_symbol):
+        self.input_symbol = input_symbol
+        (self.action, self.next_state) = self.get_transition(self.input_symbol, self.current_state)
+        def_action = None
+        if self.action is not None:
+            def_action = defer.maybeDeferred(self.action) #, *[self])
+            def_action.addCallbacks(self._action_cb, self._action_eb)
+        else:
+            self.current_state = self.next_state
+            self.next_state = None
+            def_action = defer.Deferred()
+            def_action.callback()
+
+        return def_action
+
+    def process_list(self, input_symbols):
+        """This takes a list and sends each element to process(). The list may
+be a string or any iterable object. """
+        chain = TaskChain()
+        for sym in input_symbols:
+            chain.append((self.process, [sym]))
+        return chain.run()
+
+    def get_path(self, goal_state):
+        """
+        Gets a path of input symbols from the current state to the goal state.
+        """
+        remstates = [(self.current_state, [])]
+        seenstates = []
+        while len(remstates) > 0:
+            (curstate, curinps) = remstates.pop()
+            seenstates.append(curstate)
+
+            # if this is the goal state, return the input list
+            if curstate == goal_state:
+                return curinps
+
+            # get a list of all transitions in the current state
+            matchingstates = [tup for tup in self.state_transitions.keys() if tup[1]==curstate]
+
+            # now we have a filtered list of (inp, state) matching our cur state
+            # see where they go, append them to remstates if not in seenstates
+            for k in matchingstates:
+                (act, newstate) = self.state_transitions[k]
+                if not newstate in seenstates:
+                    remstates.append((newstate, curinps + [k[0]]))
+
+        # indicates no path to goal state
+        return None
+
+    def _action_cb(self, res):
+        self.current_state = self.next_state
+        self.next_state = None
+
+    def _action_eb(self, failure):
+        # TODO: wat happens here? default transition?
+        failure.trap(StandardError)
+        failure.printBriefTraceback()
+        log.error("AsyncFSM now in error")
+
+#
+#
+# ########################################################
+#
+#
+
+class SSStates(object):
+    """
+    States for SQLstream instances.
+    Bidirectional FSM:
+        INIT <-> INSTALLED <-> READY <-> DEFINED <-> RUNNING
+    """
+    S_INIT = "INIT"
+    S_INSTALLED = "INSTALLED"
+    S_READY = "READY"
+    S_DEFINED = "DEFINED"
+    S_RUNNING = "RUNNING"
+    #S_ERROR = "ERROR"
+
+    E_INSTALL = "install"
+    E_RUNDAEMON = "rundaemon"
+    E_LOADDEFS = "loaddefs"
+    E_PUMPSON = "pumpson"
+
+    E_PUMPSOFF = "pumpsoff"
+    E_UNLOADDEFS = "unloaddefs"
+    E_STOPDAEMON = "stopdaemon"
+    E_UNINSTALL = "uninstall"
+
+#
+#
+# ########################################################
+#
+#
+
+class SSFSMFactory(object):
+
+    def create_fsm(self, target, ssid):
+        """
+        Creates a FSM for SQLstream instance state/transitions.
+        The entry for its SSID must be defined in the target's sqlstreams dict.
+        """
+        fsm = AsyncFSM(SSStates.S_INIT, None)
+
+        # extract SSID from kwargs, set up vars needed for install/uninstall
+        sdpport     = target.sqlstreams[ssid]['sdpport']
+        hsqldbport  = target.sqlstreams[ssid]['hsqldbport']
+        dirname     = target.sqlstreams[ssid]['dirname']
+        installerbin= os.path.join(os.path.dirname(__file__), "app_controller_service", "install_sqlstream.sh")
+
+        # 1. INIT <-> INSTALLED
+        proc_installer  = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
+        forward_task    = proc_installer.spawn
+        backward_task   = lambda: shutil.rmtree(dirname)
+
+        fsm.add_transition(SSStates.E_INSTALL, SSStates.S_INIT, forward_task, SSStates.S_INSTALLED)
+        fsm.add_transition(SSStates.E_UNINSTALL, SSStates.S_INSTALLED, backward_task, SSStates.S_INIT)
+
+        # 2. INSTALLED <-> READY
+        proc_server = OSSSServerProcess(binroot=dirname)
+        proc_server.addCallback(target._sqlstream_ended, sqlstreamid=ssid)
+        proc_server.addReadyCallback(target._sqlstream_started, sqlstreamid=ssid)
+        target.sqlstreams[ssid]['_serverproc'] = proc_server   # store it here, it still runs
+        forward_task = proc_server.spawn
+        backward_task = proc_server.close
+
+        fsm.add_transition(SSStates.E_RUNDAEMON, SSStates.S_INSTALLED, forward_task, SSStates.S_READY)
+        fsm.add_transition(SSStates.E_STOPDAEMON, SSStates.S_READY, backward_task, SSStates.S_INSTALLED)
+
+        # 3. READY <-> DEFINED
+        proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['sql_defs'], binroot=dirname)
+        forward_task = proc_loaddefs.spawn
+
+        proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD;", binroot=dirname)
+        backward_task = proc_unloaddefs.spawn
+
+        fsm.add_transition(SSStates.E_LOADDEFS, SSStates.S_READY, forward_task, SSStates.S_DEFINED)
+        fsm.add_transition(SSStates.E_UNLOADDEFS, SSStates.S_DEFINED, backward_task, SSStates.S_READY)
+
+        # 4. DEFINED <-> RUNNING
+        proc_pumpson = target.get_pumps_on_proc(ssid)
+        forward_task = proc_pumpson.spawn
+
+        proc_pumpsoff = target.get_pumps_off_proc(ssid)
+        backward_task = proc_pumpsoff.spawn
+
+        fsm.add_transition(SSStates.E_PUMPSON, SSStates.S_DEFINED, forward_task, SSStates.S_RUNNING)
+        fsm.add_transition(SSStates.E_PUMPSOFF, SSStates.S_RUNNING, backward_task, SSStates.S_DEFINED)
+
+        return fsm
+
+#
+#
+# ########################################################
+#
+#
 
 class AppAgent(Process):
     """
@@ -606,16 +771,12 @@ class AppAgent(Process):
             log.error("Duplicate SSID requested")
             raise ValueError("Duplicate SSID requested (%s)" % ssid)
 
-        procs = []
         chain = TaskChain()
 
         # vars needed for params
         sdpport     = str(5575 + int(ssid))
         hsqldbport  = str(9000 + int(ssid))
         dirname     = os.path.join(tempfile.gettempdir(), 'sqlstream.%s.%s' % (sdpport, hsqldbport))
-        installerbin= os.path.join(os.path.dirname(__file__), "app_controller_service", "install_sqlstream.sh")
-
-        log.debug("Starting SQLStream (sdp=%s, hsqldb=%s, install dir=%s)" % (sdpport, hsqldbport, dirname))
 
         # record state
         self.sqlstreams[ssid] = {'ssid'         : ssid,
@@ -627,29 +788,17 @@ class AppAgent(Process):
                                  'sql_defs'     : sql_defs,
                                  '_task_chain'  : chain}
 
-        # 1. Install SQLstream daemon
-        proc_installer = OSProcess(binary=installerbin, spawnargs=[sdpport, hsqldbport, dirname])
-        chain.append(proc_installer.spawn)
+        fsm = SSFSMFactory().create_fsm(self, ssid)
+        self.sqlstreams[ssid]['_fsm'] = fsm
 
-        # 2. SQLStream daemon process
-        proc_server = OSSSServerProcess(binroot=dirname)
-        proc_server.addCallback(self._sqlstream_ended, sqlstreamid=ssid)
-        proc_server.addReadyCallback(self._sqlstream_started, sqlstreamid=ssid)
-        self.sqlstreams[ssid]['_serverproc'] = proc_server   # store it here, it still runs
-        chain.append(proc_server.spawn)
+        # now move the fsm from its stock state to running
+        for sym in fsm.get_path(SSStates.S_RUNNING):
+            chain.append((fsm.process, [sym]))
 
-        # 3. Load definitions
-        proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=self.sqlstreams[ssid]['sql_defs'], binroot=dirname)
-        chain.append(proc_loaddefs.spawn)
-
-        # 4. Turn pumps on
-        proc_pumpson = self.get_pumps_on_proc(ssid)
-        chain.append(proc_pumpson.spawn)
-
-        # run chain
         chaindef = chain.run()
         chaindef.addCallback(self._sqlstream_start_chain_success, sqlstreamid=ssid)
         chaindef.addErrback(self._sqlstream_start_chain_failure, sqlstreamid=ssid)
+
         return chaindef
 
     def _sqlstream_start_chain_success(self, result, **kwargs):
@@ -924,6 +1073,13 @@ class OSSSServerProcess(OSProcess):
         Similar to addCallback, just for a different internal deferred.
         """
         self.ready_deferred.addCallback(callback, kwargs)
+
+    def close(self, force=False, timeout=30):
+        """
+        Shut down the SQLstream daemon.
+        This override exists simply to change the timeout param's default value.
+        """
+        return OSProcess.close(self, force, timeout)
 
     def _close_impl(self, force):
         """
