@@ -539,10 +539,10 @@ class SSFSMFactory(object):
         fsm.add_transition(SSStates.E_UNLOADDEFS, SSStates.S_DEFINED, backward_task, SSStates.S_READY)
 
         # 4. DEFINED <-> RUNNING
-        proc_pumpson = target.get_pumps_on_proc(ssid)
+        proc_pumpson = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target._get_sql_pumps_on(), binroot=dirname)
         forward_task = proc_pumpson.spawn
 
-        proc_pumpsoff = target.get_pumps_off_proc(ssid)
+        proc_pumpsoff = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target._get_sql_pumps_off(), binroot=dirname)
         backward_task = proc_pumpsoff.spawn
 
         fsm.add_transition(SSStates.E_PUMPSON, SSStates.S_DEFINED, forward_task, SSStates.S_RUNNING)
@@ -626,12 +626,8 @@ class AppAgent(Process):
         @return A deferred which will be called back when the steps to stop and delete a SQLstream
                 instance are complete.
         """
-        chain = TaskChain()
-        if self.sqlstreams[ssid]['state'] == 'running':
-            chain.append(self.get_pumps_off_proc(ssid).spawn)
-        chain.append((self.sqlstreams[ssid]['_serverproc'].close, [], { 'timeout':30 }))
-        chain.append((shutil.rmtree, [self.sqlstreams[ssid]['dirname']]))
-        return chain.run()
+        inps = self.sqlstreams[ssid]['_fsm'].get_path(SSStates.S_INIT)
+        return self.sqlstreams[ssid]['_fsm'].process_list(inps)
 
     def kill_sqlstream_clients(self):
         dl = []
@@ -641,6 +637,22 @@ class AppAgent(Process):
 
         deflist = defer.DeferredList(dl)
         return deflist
+
+    def _get_sql_pumps_on(self):
+        sql_cmd = """
+                  ALTER PUMP "SignalsPump" START;
+                  ALTER PUMP "DetectionsPump" START;
+                  ALTER PUMP "DetectionMessagesPump" START;
+                  """
+        return sql_cmd
+
+    def _get_sql_pumps_off(self):
+        sql_cmd = """
+                  ALTER PUMP "SignalsPump" STOP;
+                  ALTER PUMP "DetectionsPump" STOP;
+                  ALTER PUMP "DetectionMessagesPump" STOP;
+                  """
+        return sql_cmd
 
     @defer.inlineCallbacks
     def _get_sql_defs(self, sqldefs=None, uconf={}, **kwargs):
@@ -849,87 +861,17 @@ class AppAgent(Process):
         """
         log.info("ctl_sqlstream received " + content['action'])
 
-        yield self.reply_ok(msg, {'value':'ok'}, {})
+        self.reply_ok(msg, {'value':'ok'}, {})
+
+        ssid = content['sqlstreamid']
 
         if content['action'] == 'pumps_on':
-            proc_pumpson = self.get_pumps_on_proc(content['sqlstreamid'])
-            proc_pumpson.addCallback(self._pumps_on_callback, sqlstreamid=content['sqlstreamid'])
-            proc_pumpson.spawn()
+            inps = self.sqlstreams[ssid]['_fsm'].get_path(SSStates.S_RUNNING)
+            self.sqlstreams[ssid]['_fsm'].process_list(inps)
 
         elif content['action'] == 'pumps_off':
-            proc_pumpsoff = self.get_pumps_off_proc(content['sqlstreamid'])
-            proc_pumpsoff.addCallback(self._pumps_off_callback, sqlstreamid=content['sqlstreamid'])
-            proc_pumpsoff.spawn()
-
-    def get_pumps_on_proc(self, sqlstreamid):
-        """
-        Instructs the given SQLStream worker to turn its pumps on.
-        It will begin or resume reading from its queue.
-        """
-
-        sql_cmd = """
-                  ALTER PUMP "SignalsPump" START;
-                  ALTER PUMP "DetectionsPump" START;
-                  ALTER PUMP "DetectionMessagesPump" START;
-                  """
-        sdpport = self.sqlstreams[sqlstreamid]['sdpport']
-        binroot = self.sqlstreams[sqlstreamid]['dirname']
-        proc_pumpson = OSSSClientProcess(spawnargs=[sdpport], binroot=binroot, sqlcommands=sql_cmd)
-
-        return proc_pumpson
-
-    def _pumps_on_callback(self, result, *args):
-        log.debug("Pumps on returned: %d" % result['exitcode'])
-
-        sqlstreamid = args[0].get('sqlstreamid')
-
-        # remove ref to proc
-        self.sqlstreams[sqlstreamid].pop('proc', None)
-
-        if result['exitcode'] == 0:
-            self.sqlstreams[sqlstreamid]['state'] = 'running'
-        else:
-            self.sqlstreams[sqlstreamid]['state'] = 'error'
-            log.warning("Could not turn pumps on for %s, SS # %d" % (self.opunit_id, sqlstreamid))
-
-        # update status on controller
-        self.opunit_status()
-
-    def get_pumps_off_proc(self, sqlstreamid):
-        """
-        Builds an OSProcess to nstructs the given SQLStream worker to turn its pumps off.
-        It will no longer read from its queue after this process is spawned.
-        """
-
-        sql_cmd = """
-                  ALTER PUMP "SignalsPump" STOP;
-                  ALTER PUMP "DetectionsPump" STOP;
-                  ALTER PUMP "DetectionMessagesPump" STOP;
-                  """
-        self.sqlstreams[sqlstreamid]['state'] = 'stopped'
-
-        sdpport = self.sqlstreams[sqlstreamid]['sdpport']
-        binroot = self.sqlstreams[sqlstreamid]['dirname']
-        proc_pumpsoff = OSSSClientProcess(spawnargs=[sdpport], binroot=binroot, sqlcommands=sql_cmd)
-
-        return proc_pumpsoff
-
-    def _pumps_off_callback(self, result, *args):
-        log.debug("Pumps off returned: %d" % result['exitcode'])
-
-        sqlstreamid = args[0].get('sqlstreamid')
-
-        # remove ref to proc
-        self.sqlstreams[sqlstreamid].pop('proc', None)
-
-        if result['exitcode'] == 0:
-            self.sqlstreams[sqlstreamid]['state'] = 'stopped'
-        else:
-            self.sqlstreams[sqlstreamid]['state'] = 'error'
-            log.warning("Could not turn pumps off for %s, SS # %d" % (self.id.full, sqlstreamid))
-
-        # update status on controller
-        self.opunit_status()
+            inps = self.sqlstreams[ssid]['_fsm'].get_path(SSStates.S_DEFINED)
+            self.sqlstreams[ssid]['_fsm'].process_list(inps)
 
 #
 #
