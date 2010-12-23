@@ -318,7 +318,11 @@ class AppControllerService(ServiceProcess):
         metrics     = status['metrics']
         sqlstreams  = status['sqlstreams']
 
-        log.info("Op Unit (%s) status update: state (%s), sqlstreams (%d)" % (opunit_id, state, len(sqlstreams)))
+        sstext = ""
+        for ssid, sinfo in sqlstreams.items():
+            sstext += "(id: %s status: %s queue: %s)" % (ssid, sinfo['state'], sinfo['inp_queue'])
+
+        log.info("Op Unit (%s) status update: state (%s), sqlstreams (%d): %s" % (opunit_id, state, len(sqlstreams), sstext))
 
         if not self.workers.has_key(status['id']):
             self.workers[status['id']] = {}
@@ -725,6 +729,10 @@ class AppAgent(Process):
         sqlstreams = {}
         for ssid,sinfo in self.sqlstreams.items():
             sqlstreams[ssid] = {}
+            if sqlstreams[ssid].has_key('_fsm'):
+                sqlstreams[ssid]['state'] = sqlstreams[ssid]['_fsm'].current_state
+            else:
+                sqlstreams[ssid]['state'] = "?"
             for k,v in sinfo.items():
                 if k[0:1] == "_":
                     continue
