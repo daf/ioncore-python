@@ -532,7 +532,7 @@ class SSFSMFactory(object):
         proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['sql_defs'], binroot=dirname)
         forward_task = proc_loaddefs.spawn
 
-        proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD;", binroot=dirname)
+        proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD CASCADE;", binroot=dirname)
         backward_task = proc_unloaddefs.spawn
 
         fsm.add_transition(SSStates.E_LOADDEFS, SSStates.S_READY, forward_task, SSStates.S_DEFINED)
