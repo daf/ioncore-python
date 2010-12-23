@@ -422,6 +422,14 @@ be a string or any iterable object. """
             chain.append((self.process, [sym]))
         return chain.run()
 
+    def run_to_state(self, goal_state):
+        """
+        Attempts to run from the current state to the goal state.
+
+        Uses get_path then process_list. Returns the deferred from process_list.
+        """
+        return self.process_list(self.get_path(goal_state))
+
     def get_path(self, goal_state):
         """
         Gets a path of input symbols from the current state to the goal state.
@@ -626,8 +634,7 @@ class AppAgent(Process):
         @return A deferred which will be called back when the steps to stop and delete a SQLstream
                 instance are complete.
         """
-        inps = self.sqlstreams[ssid]['_fsm'].get_path(SSStates.S_INIT)
-        return self.sqlstreams[ssid]['_fsm'].process_list(inps)
+        return self.sqlstreams[ssid]['_fsm'].run_to_state(SSStates.S_INIT)
 
     def kill_sqlstream_clients(self):
         dl = []
@@ -866,12 +873,10 @@ class AppAgent(Process):
         ssid = content['sqlstreamid']
 
         if content['action'] == 'pumps_on':
-            inps = self.sqlstreams[ssid]['_fsm'].get_path(SSStates.S_RUNNING)
-            self.sqlstreams[ssid]['_fsm'].process_list(inps)
+            self.sqlstreams[ssid]['_fsm'].run_to_state(SSStates.S_RUNNING)
 
         elif content['action'] == 'pumps_off':
-            inps = self.sqlstreams[ssid]['_fsm'].get_path(SSStates.S_DEFINED)
-            self.sqlstreams[ssid]['_fsm'].process_list(inps)
+            self.sqlstreams[ssid]['_fsm'].run_to_state(SSStates.S_DEFINED)
 
 #
 #
