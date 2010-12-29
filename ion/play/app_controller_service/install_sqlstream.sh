@@ -6,7 +6,7 @@
 # Dave Foster <dfoster@asascience.com>
 # Initial 7 Dec 2010
 
-SS_INSTALLER_BIN="/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
+SS_INSTALLER_BIN="/home/daf/Downloads/SQLstream-2.5.0.6509-opto-x86_64.bin"
 SS_SEISMIC_JAR="/usr/local/seismic/lib/ucsd-seismic.jar"
 RABBITMQ_JAVA_CLIENT_ZIP="/usr/local/rabbitmq-java-client-bin-1.5.3.zip"
 
@@ -68,57 +68,10 @@ patch --no-backup-if-mismatch -d $DIRNAME/bin >/dev/null <<'EOF'
 EOF
 chmod -w $DAEMONPATH
 
-# 4. Fix client file
-CLIENTPATH=$DIRNAME/bin/sqllineClient
-chmod +w $CLIENTPATH
-patch --no-backup-if-mismatch -d $DIRNAME/bin >/dev/null <<'EOF'
---- /tmp/sqlstream.H3AvjQ/bin/sqllineClient	2010-11-17 17:49:05.000000000 -0500
-+++ sqlstream/sqllineClient	2010-12-03 09:22:30.893290333 -0500
-@@ -51,19 +51,23 @@
- fi
- 
- # if still have argument(s), must be connection properties files
-+CONNFILE=0
- if [ -n "$1" ]; then
-     ARGS=
-     while [ -n "$1" ]; do
-         PROP=$1.conn.properties
-         if [ -e $PROP ]; then
-             ARGS="$ARGS $PROP"
-+            CONNFILE=1
-         else
-             ARGS="$ARGS $1"
-         fi
-         shift
-     done
-     echo $ARGS
--else
-+fi
-+
-+if [ $CONNFILE -eq 0 ]; then
-     # add session name
-     SELF=`basename $0`
-     set +e  # ignore non-zero return
-@@ -86,9 +90,12 @@
-     # so CLIENT_DRIVER_URL must not contain embedded blanks
- 
-     ARGS="\
-+      $ARGS \
-       -u ${CLIENT_DRIVER_URL} \
-       -d com.sqlstream.aspen.vjdbc.AspenDriver \
-       -n sa"
-+
-+    echo $ARGS
- fi
- 
- #REMOTE_DBG=-agentlib:jdwp=transport=dt_socket,address=8003,server=y,suspend=n
-EOF
-chmod -w $CLIENTPATH
-
-# 5. Change SDP port
+# 4. Change SDP port
 echo -e "aspen.sdp.port=$SDPPORT\naspen.controlnode.url=sdp://localhost:$SDPPORT" >$DIRNAME/aspen.custom.properties
 
-# 6. Change HSQLDB port in props file
+# 5. Change HSQLDB port in props file
 HSQLDBPROPSTEMP=`mktemp -t`
 PROPSFILE=$DIRNAME/catalog/ReposStorage.hsqldbserver.properties
 HSQLDBPROPSPERMS=`stat --format=%a $PROPSFILE`
@@ -127,7 +80,7 @@ chmod +w $PROPSFILE
 mv $HSQLDBPROPSTEMP $PROPSFILE
 chmod $HSQLDBPROPSPERMS $PROPSFILE
 
-# 7. Change HSQLDB port in binary file
+# 6. Change HSQLDB port in binary file
 HSQLDBBINTEMP=`mktemp -t`
 HSQLDBBIN=$DIRNAME/bin/hsqldb
 HSQLDBPERMS=`stat --format=%a $HSQLDBBIN`
@@ -136,10 +89,10 @@ chmod +w $HSQLDBBIN
 mv $HSQLDBBINTEMP $HSQLDBBIN
 chmod $HSQLDBPERMS $HSQLDBBIN
 
-# 8. Copy UCSD seismic application jar to plugin dir
+# 7. Copy UCSD seismic application jar to plugin dir
 cp $SS_SEISMIC_JAR $DIRNAME/plugin
 
-# 9. Unzip rabbitmq client zipfile to a known location
+# 8. Unzip rabbitmq client zipfile to a known location
 # possible security risk : using known file
 RABBITBASE=`basename $RABBITMQ_JAVA_CLIENT_ZIP`
 RABBITDIR=`dirname $DIRNAME`/${RABBITBASE%.zip}
@@ -147,7 +100,7 @@ if [ ! -d "${RABBITDIR}" ]; then
     unzip $RABBITMQ_JAVA_CLIENT_ZIP -d $RABBITDIR >/dev/null
 fi
 
-# 10. Symlink things in plugin/autocp dir
+# 9. Symlink things in plugin/autocp dir
 AUTOCPDIR=$DIRNAME/plugin/autocp
 ln -s $RABBITDIR/rabbitmq-client.jar $AUTOCPDIR/rabbitmq-client.jar
 ln -s $RABBITDIR/commons-cli-1.1.jar $AUTOCPDIR/commons-cli-1.1.jar

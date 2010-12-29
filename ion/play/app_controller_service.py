@@ -1000,7 +1000,7 @@ class OSSSClientProcess(OSProcess):
 
             self.temp_file = f.name
 
-            newargs.append("--run=%s" % self.temp_file)
+            newargs.insert(0, "--run=%s" % self.temp_file)
 
         return OSProcess.spawn(self, binary, newargs)
 
