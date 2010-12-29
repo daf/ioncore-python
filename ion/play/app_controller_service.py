@@ -403,6 +403,25 @@ class AsyncFSM(FSM):
     The action need not return a deferred, it is wrapped in defer.maybeDeferred.
     """
 
+    def __init__(self, initial_state, memory=None):
+        FSM.__init__(self, initial_state, memory)
+
+        self._state_change_notices = []
+
+    def add_state_change_notice(self, notice):
+        """
+        Add a callable to be called back when the state of this AsyncFSM changes.
+
+        @param notice   A callable which will be called with a reference to the AsyncFSM as its only param.
+        """
+        self._state_change_notices.append(notice)
+
+    def del_state_change_notice(self, notice):
+        try:
+            self._state_change_notices.remove(notice)
+        except ValueError:
+            pass
+
     def process(self, input_symbol):
         self.input_symbol = input_symbol
         (self.action, self.next_state) = self.get_transition(self.input_symbol, self.current_state)
@@ -464,6 +483,10 @@ be a string or any iterable object. """
     def _action_cb(self, res):
         self.current_state = self.next_state
         self.next_state = None
+
+        # TODO: maybeDeferred?
+        for notice in self._state_change_notices:
+            reactor.callLater(0, notice, [self])
 
     def _action_eb(self, failure):
         # TODO: wat happens here? default transition?
@@ -729,8 +752,8 @@ class AppAgent(Process):
         sqlstreams = {}
         for ssid,sinfo in self.sqlstreams.items():
             sqlstreams[ssid] = {}
-            if sqlstreams[ssid].has_key('_fsm'):
-                sqlstreams[ssid]['state'] = sqlstreams[ssid]['_fsm'].current_state
+            if sinfo.has_key('_fsm'):
+                sqlstreams[ssid]['state'] = sinfo['_fsm'].current_state
             else:
                 sqlstreams[ssid]['state'] = "?"
             for k,v in sinfo.items():
@@ -785,6 +808,13 @@ class AppAgent(Process):
 
         yield self.reply_ok(msg, resp, {})
 
+    def _sqlstream_state_changed(self, fsm):
+        """
+        Called back when a SQLstream's FSM state has changed.
+        Used to update the controller.
+        """
+        self.opunit_status() # report
+
     def start_sqlstream(self, ssid, inp_queue, sql_defs):
         """
         Returns a deferred you can yield on. When finished, the sqlstream should be up
@@ -809,7 +839,6 @@ class AppAgent(Process):
         self.sqlstreams[ssid] = {'ssid'         : ssid,
                                  'hsqldbport'   : hsqldbport,
                                  'sdpport'      : sdpport,
-                                 'state'        : 'starting',
                                  'inp_queue'    : inp_queue,
                                  'dirname'      : dirname,
                                  'sql_defs'     : sql_defs,
@@ -817,6 +846,7 @@ class AppAgent(Process):
 
         fsm = SSFSMFactory().create_fsm(self, ssid)
         self.sqlstreams[ssid]['_fsm'] = fsm
+        fsm.add_state_change_notice(self._sqlstream_state_changed)
 
         # now move the fsm from its stock state to running
         for sym in fsm.get_path(SSStates.S_RUNNING):
@@ -832,7 +862,6 @@ class AppAgent(Process):
         ssid = kwargs.get("sqlstreamid")
         log.info("SQLstream (%s) started" % ssid)
 
-        self.sqlstreams[ssid]['state'] = 'running'
         self.sqlstreams[ssid].pop('_task_chain')    # remove ref to chain
 
         self.opunit_status() # report
@@ -841,7 +870,6 @@ class AppAgent(Process):
         ssid = kwargs.get("sqlstreamid")
         log.error('SQLstream (%s) startup ERROR - %s' % (ssid, str(failure)))
 
-        self.sqlstreams[ssid]['state'] = 'error'
         self.sqlstreams[ssid].pop('_task_chain')    # remove ref to chain TODO: keep for errors?
 
         failure.trap(StandardError)
@@ -855,8 +883,6 @@ class AppAgent(Process):
         ssid = args[0].get('sqlstreamid')
         log.debug("SQLStream (%s) has ended" % ssid)
         self.sqlstreams[ssid].pop('_serverproc', None)
-
-        self.sqlstreams[ssid]['state'] = 'stopped'
 
         self.opunit_status()
 
