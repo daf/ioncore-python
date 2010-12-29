@@ -7,7 +7,6 @@
 """
 
 import os, string, tempfile, shutil
-#from collections import MutableSequence        # MUTABLESEQUENCE
 
 from ion.core import ioninit
 
@@ -55,11 +54,7 @@ SSD_READY_STRING = "Server ready; enter"
 SSD_BIN = "bin/SQLstreamd"
 SSC_BIN = "bin/sqllineClient"
 
-DEBUG_WRITE_PROV_JSON=False     # TODO: config file
-
-# TODO: deployables
-SS_INSTALLER_BIN = "/home/daf/Downloads/SQLstream-2.5.0.6080-opto-x86_64.bin"
-SS_SEISMIC_JAR = "/usr/local/seismic/lib/ucsd-seismic.jar"
+DEBUG_WRITE_PROV_JSON=CONF.getValue("DEBUG_WRITE_PROV_JSON", False) # DEBUG
 
 class AppControllerService(ServiceProcess):
     """
