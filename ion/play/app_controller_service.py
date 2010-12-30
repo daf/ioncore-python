@@ -677,9 +677,9 @@ class AppAgent(Process):
 
     def _get_sql_pumps_off(self):
         sql_cmd = """
-                  ALTER PUMP "SignalsPump" STOP;
-                  ALTER PUMP "DetectionsPump" STOP;
                   ALTER PUMP "DetectionMessagesPump" STOP;
+                  ALTER PUMP "DetectionsPump" STOP;
+                  ALTER PUMP "SignalsPump" STOP;
                   """
         return sql_cmd
 
