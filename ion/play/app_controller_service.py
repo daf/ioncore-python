@@ -355,7 +355,7 @@ class AppControllerService(ServiceProcess):
             fulltemplatelist.extend(f.readlines())
             f.close()
 
-        fulltemplate = "\n".join(fulltemplatelist)
+        fulltemplate = "".join(fulltemplatelist)
 
         self.attribute_store_client.put(SQLTDEFS_KEY, fulltemplate)
 
