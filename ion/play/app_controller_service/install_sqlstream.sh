@@ -6,7 +6,7 @@
 # Dave Foster <dfoster@asascience.com>
 # Initial 7 Dec 2010
 
-SS_INSTALLER_BIN="/home/daf/Downloads/SQLstream-2.5.0.6509-opto-x86_64.bin"
+SS_INSTALLER_BIN="/home/daf/Downloads/SQLstream-2.5.0RC1-opto-x86_64.bin"
 SS_SEISMIC_JAR="/usr/local/seismic/lib/ucsd-seismic.jar"
 RABBITMQ_JAVA_CLIENT_ZIP="/usr/local/rabbitmq-java-client-bin-1.5.3.zip"
 
@@ -97,7 +97,7 @@ cp $SS_SEISMIC_JAR $DIRNAME/plugin
 RABBITBASE=`basename $RABBITMQ_JAVA_CLIENT_ZIP`
 RABBITDIR=`dirname $DIRNAME`/${RABBITBASE%.zip}
 if [ ! -d "${RABBITDIR}" ]; then
-    unzip $RABBITMQ_JAVA_CLIENT_ZIP -d $RABBITDIR >/dev/null
+    unzip $RABBITMQ_JAVA_CLIENT_ZIP -d /tmp >/dev/null
 fi
 
 # 9. Symlink things in plugin/autocp dir
