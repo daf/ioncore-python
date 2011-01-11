@@ -73,16 +73,29 @@ class AppControllerService(ServiceProcess):
 
         # get connection details to broker
         cnfgsrc = self.container.exchange_manager.exchange_space.message_space.connection
+
         broker_config = { 'server_host'     : cnfgsrc.hostname,
                           'server_port'     : cnfgsrc.port,
                           'server_user'     : cnfgsrc.userid,
                           'server_password' : cnfgsrc.password,
                           'server_vhost'    : cnfgsrc.virtual_host }
 
+        # get configs for current exchange setup from exchange space, queues as per what TopicWorkerReceiver (below) uses
+        exchcnfg = self.container.exchange_manager.exchange_space.exchange
+        msgcnfg = messaging.worker('temp')
+
         # provisioner vars are common vars for all worker instances
-        self.prov_vars = { 'sqlt_vars' : { 'inp_exchange' : INP_EXCHANGE_NAME,
-                                           'det_topic'    : DETECTION_TOPIC,
-                                           'det_exchange' : OUT_EXCHANGE_NAME } }
+        self.prov_vars = { 'sqlt_vars' : { 'inp_exchange'           : INP_EXCHANGE_NAME,
+                                           'inp_exchange_type'      : exchcnfg.exchange_type,
+                                           'inp_exchange_durable'   : exchcnfg.durable,
+                                           'inp_exchange_autodelete': exchcnfg.auto_delete,
+                                           'inp_queue_durable'      : msgcnfg['durable'],
+                                           'inp_queue_autodelete'   : msgcnfg['auto_delete'],
+                                           'det_topic'              : DETECTION_TOPIC,
+                                           'det_exchange'           : OUT_EXCHANGE_NAME,
+                                           'det_exchange_type'      : exchcnfg.exchange_type,
+                                           'det_exchange_durable'   : exchcnfg.durable,
+                                           'det_exchange_autodelete': exchcnfg.auto_delete } }
 
         self.prov_vars['sqlt_vars'].update(broker_config)
 
@@ -350,7 +363,7 @@ class AppControllerService(ServiceProcess):
         updated. See op_set_sql_defs for more information.
         """
         fulltemplatelist = []
-        for filename in ["catalog.sqlt", "funcs.sqlt", "detections.sqlt", "validate.sqlt"]:
+        for filename in ["catalog.sqlt", "funcs.sqlt", "detections.sqlt"]:
             f = open(os.path.join(os.path.dirname(__file__), "app_controller_service", filename), "r")
             fulltemplatelist.extend(f.readlines())
             f.close()
@@ -368,14 +381,21 @@ class AppControllerService(ServiceProcess):
         restarted, it will need to be updated with the current defs again.
 
         This method expects that the only key in content, also named content, is a full 
-        SQL definition (the concatenation of "catalog.sqlt", "detections.sqlt", and 
-        "validate.sqlt") with Python string.Template vars as substitution points for the
-        following variables:
+        SQL definition (the concatenation of "catalog.sqlt" and "detections.sqlt") with
+        Python string.Template vars as substitution points for the following variables:
 
-        * inp_queue     - The input queue name to read messages from.
-        * inp_exchange  - The exchange where the input queue resides.
-        * det_topic     - The topic string that should be used for detections.
-        * det_exchange  - The exchange where detections should be published.
+        * inp_queue                 - The input queue name to read messages from.
+        * inp_queue_autodelete      - The input queue's auto_delete setting.
+        * inp_queue_durable         - The input queue's durable setting.
+        * inp_exchange              - The exchange where the input queue resides.
+        * inp_exchange_type         - The exchange's type (topic/fanout/direct).
+        * inp_exchange_durable      - The exchange's durable setting.
+        * inp_exchange_autodelete   - The exchange's auto_delete setting.
+        * det_topic                 - The topic string that should be used for detections.
+        * det_exchange              - The exchange where detections should be published.
+        * det_exchange_type         - The detection exchange's type (topic/fanout/direct).
+        * det_exchange_durable      - The detection exchange's durable setting.
+        * det_exchange_autodelete   - The detection exchange's auto_delete setting.
 
         If these variables are not present, no error is thrown - it will use whatever you
         gave it. So your updated SQL definitions may hardcode the variables above.

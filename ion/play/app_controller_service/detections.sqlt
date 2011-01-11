@@ -257,7 +257,13 @@ CREATE FOREIGN STREAM "DetectionMessages" (
       tag varchar(3)
   )
   SERVER "AMQPServer"
-  OPTIONS (EXCHANGE '${det_exchange}', TOPIC '${det_topic}', TYPE 'WRITER');
+  OPTIONS (EXCHANGE '${det_exchange}',
+           EXCHANGE_AUTO_DELETE '${det_exchange_autodelete}',
+           EXCHANGE_TYPE '${det_exchange_type}',
+           EXCHANGE_DURABLE '${det_exchange_durable}',
+           EXCHANGE_PASSIVE 'false',
+           TOPIC '${det_topic}',
+           TYPE 'WRITER');
 
 CREATE OR REPLACE PUMP "DetectionMessagesPump" STOPPED AS
   INSERT INTO "DetectionMessages" 

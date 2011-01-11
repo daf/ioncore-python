@@ -32,7 +32,17 @@ CREATE FOREIGN STREAM "RawSignalMessages" (
        header varchar(256),
        body   varbinary(2048))
     SERVER "AMQPServer"
-    OPTIONS (EXCHANGE '${inp_exchange}', QUEUE '${inp_queue}', TYPE 'READER');
+    OPTIONS (EXCHANGE '${inp_exchange}',
+             EXCHANGE_TYPE '${inp_exchange_type}',
+             EXCHANGE_DURABLE '${inp_exchange_durable}',
+             EXCHANGE_AUTO_DELETE '${inp_exchange_autodelete}',
+             EXCHANGE_PASSIVE 'true',
+             QUEUE '${inp_queue}',
+             QUEUE_DURABLE '${inp_queue_durable}',
+             QUEUE_AUTO_DELETE '${inp_queue_autodelete}',
+             QUEUE_EXCLUSIVE 'false',
+             QUEUE_PASSIVE 'true',
+             TYPE 'READER');
 
 
 -- Decode messages, yielding a stream of raw signal data.
