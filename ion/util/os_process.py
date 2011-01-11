@@ -181,7 +181,10 @@ class OSProcess(protocol.ProcessProtocol):
         the exit code, the lines produced on stdout, and the lines on stderr.
         If the exit code is non zero, the errback is raised.
         """
-        log.debug("OSProcess: process ended (exitcode: %d)" % reason.value.exitCode)
+        try:
+            log.debug("OSProcess: process ended (exitcode: %d)" % reason.value.exitCode)
+        except TypeError:
+            log.debug("OSProcess: process ended (no exit code available, %s)" % str(reason))
 
         # if this was called as a result of a close() call, we need to cancel the timeout so
         # it won't try to kill again
