@@ -284,6 +284,16 @@ class AppControllerService(ServiceProcess):
             json.dump(conf, f)
             f.close()
 
+            # merge and write individual worker configs while we're at it
+            for (wid, winfo) in self.workers.items():
+                wdict = { 'opunit_id' : wid,
+                          'sqlstreams': str(conf['unique_instances'][wid]['sqlstreams']),   # TODO: unstringify this
+                          'sqlt_vars' : self.prov_vars['sqlt_vars'] }
+
+                f = open('/tmp/sa-' + wid + '.json', 'w')
+                json.dump(wdict, f, indent=1)
+                f.close()
+
         self.epu_controller_client.reconfigure(conf)
 
     def has_station_binding(self, station_name):
@@ -637,7 +647,7 @@ class AppAgent(Process):
         # check spawn args for sqlstreams, start them up as appropriate
         # expect a stringify'd python array of dicts
         if self.spawn_args.has_key('sqlstreams'):
-            sqlstreams = eval(self.spawn_args['sqlstreams'])
+            sqlstreams = eval(self.spawn_args['sqlstreams'])        # TODO: unstringify this
 
             for ssinfo in sqlstreams:
                 ssid = ssinfo['ssid']
