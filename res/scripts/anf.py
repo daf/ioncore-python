@@ -11,6 +11,8 @@ from ion.core import ioninit
 from ion.core import bootstrap
 from ion.core.cc.shell import control
 
+from ion.play.app_controller_service import DetectionConsumer, DETECTION_TOPIC
+
 CONF = ioninit.config('startup.pubsub')
 
 # Static definition of message queues
@@ -33,5 +35,11 @@ def start():
     startsvcs = []
     startsvcs.extend(anf_services)
     sup = yield bootstrap.bootstrap(ion_messaging, startsvcs)
+
+    det = DetectionConsumer(DETECTION_TOPIC, scope="global")
+    yield det.attach()
+
+    control.add_term_name("det", det)
+    print "Detection collector 'det' available."
 
 start()
