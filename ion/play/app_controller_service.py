@@ -426,6 +426,17 @@ class AsyncFSM(FSM):
 
     The AsyncFSM does not change its state until the action calls back succesfully.
     The action need not return a deferred, it is wrapped in defer.maybeDeferred.
+
+    An AsyncFSM offers additional improvements over a regular FSM:
+    - Transition actions may or may not return deferreds (they are wrapped in defer.maybeDeferred)
+    - Offers a way to perform many transitions at once without knowing all the input symbols 
+      required to get to that state (see run_to_state). It computes the list of symbols
+      via get_path.
+    - Notice of state transitions: you may add callables (via add_state_change_notice) that
+      get called on every successful state transition. The callable takes a single param,
+      a reference to this AsyncFSM. This can be used to update interested parties when a
+      multi stage transition via run_to_state is being run.
+
     """
 
     def __init__(self, initial_state, memory=None):
@@ -448,6 +459,13 @@ class AsyncFSM(FSM):
             pass
 
     def process(self, input_symbol):
+        """
+        Takes an input and performs an action based on its current state and the input.
+
+        Finds a transition from the current state taking the input and calls the action
+        required. This action may or may not return a deferred. When the action completes,
+        the state changes.
+        """
         self.input_symbol = input_symbol
         (self.action, self.next_state) = self.get_transition(self.input_symbol, self.current_state)
         def_action = None
@@ -506,15 +524,27 @@ be a string or any iterable object. """
         return None
 
     def _action_cb(self, res):
+        """
+        Action successful callback.
+
+        Calls notice callbacks and sets this AsyncFSM's current state.
+        """
         self.current_state = self.next_state
         self.next_state = None
 
-        # TODO: maybeDeferred?
+        # perform notices to callbacks
+        # use maybe deferred becuase they may or may not be async, and we don't
+        # really care about waiting for them
         for notice in self._state_change_notices:
-            reactor.callLater(0, notice, [self])
+            defer.maybeDeferred(notice, self)
 
     def _action_eb(self, failure):
-        # TODO: wat happens here? default transition?
+        """
+        Action unsuccessful errback.
+
+        @todo more needed.
+        """
+        # TODO: what happens here? default transition?
         failure.trap(StandardError)
         failure.printBriefTraceback()
         log.error("AsyncFSM now in error")
