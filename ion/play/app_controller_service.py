@@ -487,8 +487,10 @@ class SSFSMFactory(object):
         proc_loaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands=target.sqlstreams[ssid]['sql_defs'], binroot=dirname)
         forward_task = proc_loaddefs.spawn
 
-        proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD CASCADE;", binroot=dirname)
-        backward_task = proc_unloaddefs.spawn
+        # 18 Jan 2011 - Disabled due to lack of ability to turn consumer off - will freeze sqllineClient
+        #proc_unloaddefs = OSSSClientProcess(spawnargs=[sdpport], sqlcommands="DROP SCHEMA UCSD CASCADE;", binroot=dirname)
+        #backward_task = proc_unloaddefs.spawn
+        backward_task = lambda: False     # can't do pass here?
 
         fsm.add_transition(SSStates.E_LOADDEFS, SSStates.S_READY, forward_task, SSStates.S_DEFINED)
         fsm.add_transition(SSStates.E_UNLOADDEFS, SSStates.S_DEFINED, backward_task, SSStates.S_READY)
