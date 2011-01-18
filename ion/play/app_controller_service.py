@@ -534,6 +534,7 @@ class AppAgent(Process):
 
         self.metrics = { 'cores' : self._get_cores() }
         self.sqlstreams = {}
+        self._fsm_factory_class = kwargs.pop("fsm_factory", SSFSMFactory)
 
     @defer.inlineCallbacks
     def plc_init(self):
@@ -766,7 +767,7 @@ class AppAgent(Process):
                                  'sql_defs'     : sql_defs,
                                  '_task_chain'  : chain}
 
-        fsm = SSFSMFactory().create_fsm(self, ssid)
+        fsm = self._fsm_factory_class().create_fsm(self, ssid)
         self.sqlstreams[ssid]['_fsm'] = fsm
         fsm.add_state_change_notice(self._sqlstream_state_changed)
 
