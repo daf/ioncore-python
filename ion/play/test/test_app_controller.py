@@ -11,7 +11,7 @@ log = ion.util.ionlog.getLogger(__name__)
 from twisted.internet import defer
 
 from ion.play import app_controller_service as app_controller_module
-from ion.play.app_controller_service import AppControllerService, AppAgent
+from ion.play.app_controller_service import AppControllerService, AppAgent, SSFSMFactory
 from ion.test.iontest import IonTestCase
 
 from ion.core.process.process import ProcessFactory, Process, ProcessClient, ProcessDesc, processes
@@ -54,14 +54,26 @@ class FakeEPUControllerService(ServiceProcess):
 
                     #desc = ProcessDesc(name="AppAgent-%s" % k, module="ion.play.app_controller_service", procclass="AppAgent", spawnargs=sa)
                     #yield ioninit.container_instance.spawn_process(desc, self)
-                    aa = AppAgent(spawnargs=sa)
+                    aa = AppAgent(spawnargs=sa, fsm_factory=FakeSSFSMFactory)
                     yield aa.spawn()
 
                     self._agents[k] = aa
 
         self._conf = content
 
+class FakeSSFSMFactory(SSFSMFactory):
 
+    def create_fsm(self, target, ssid):
+        """
+        Modifies the FSM produced by SSFSMFactory to actually not perform any of its actions to change
+        state.
+        """
+        fsm = SSFSMFactory.create_fsm(self, target, ssid)
+
+        for inppair, actionpair in fsm.state_transitions.items():
+            fsm.state_transitions[inppair] = (None, actionpair[1])
+
+        return fsm
 
 class AppControllerTest(IonTestCase):
     """
