@@ -26,7 +26,7 @@ from ion.core.process.service_process import ServiceProcess, ServiceClient
 import ion.util.procutils as pu
 
 from ion.core.messaging.message_client import MessageClient
-from ion.services.coi.resource_registry.resource_client import ResourceClient, ResourceClientError
+from ion.services.coi.resource_registry.resource_client import ResourceClient
 from ion.services.dm.distribution.publisher_subscriber import Subscriber, PublisherFactory
 
 from ion.core.object.cdm_methods import attribute_merge
@@ -138,7 +138,6 @@ class IngestionService(ServiceProcess):
         self.dsc = datastore.DataStoreClient(proc=self)
 
         self.dataset = None
-        self.data_source = None
 
         log.info('IngestionService.__init__()')
 
@@ -230,23 +229,9 @@ class IngestionService(ServiceProcess):
         log.debug('_prepare_ingest - Start')
 
         # Get the current state of the dataset:
-        try:
-            self.dataset = yield self.rc.get_instance(content.dataset_id, excluded_types=[CDM_BOUNDED_ARRAY_TYPE])
-
-        except ResourceClientError, rce:
-           log.exception('Could not get dataset resource!')
-           raise IngestionError('Could not get the dataset resource from the datastore')
+        self.dataset = yield self.rc.get_instance(content.dataset_id, excluded_types=[CDM_BOUNDED_ARRAY_TYPE])
 
         log.info('Got dataset resource')
-
-        try:
-            self.data_source = yield self.rc.get_instance(content.datasource_id)
-        except ResourceClientError, rce:
-           log.exception('Could not get datasource resource!')
-           raise IngestionError('Could not get the datasource resource from the datastore')
-
-        log.info('Got datasource resource')
-
 
         # Get the bounded arrays but not the ndarrays
         ba_links = []
@@ -396,9 +381,8 @@ class IngestionService(ServiceProcess):
             ingest_res={EM_ERROR:'Ingestion Failed!'}
             ingest_res.update(data_details)
 
-
-        resources = []
-
+        # below here is only performed if there is no Exception
+        data_source = None
         if ingest_res.has_key(EM_ERROR):
             log.info("Ingest Failed!")
 
@@ -409,15 +393,13 @@ class IngestionService(ServiceProcess):
         else:
             log.info("Ingest succeeded!")
 
-            resources.append(self.dataset)
-
             # If the dataset / source is new 
             if self.dataset.ResourceLifeCycleState == self.dataset.NEW:
 
                 log.info('Fetching datasource id - %s - to set life cycle state' % content.datasource_id)
                 data_source = yield self.rc.get_instance(content.datasource_id)
 
-                if self.data_source.is_public == True:
+                if data_source.is_public == True:
 
                     data_source.ResourceLifeCycleState = data_source.COMMISSIONED
                     self.dataset.ResourceLifeCycleState = self.dataset.COMMISSIONED
@@ -427,9 +409,10 @@ class IngestionService(ServiceProcess):
                     data_source.ResourceLifeCycleState = data_source.ACTIVE
                     self.dataset.ResourceLifeCycleState = self.dataset.ACTIVE
 
-                resources.append(self.data_source)
 
-
+        resources=[self.dataset]
+        if data_source is not None:
+            resources.append(data_source)
 
         for res in resources:
             log.info('Resource %s life cycle state is %s' % (res.ResourceName, res.ResourceLifeCycleState))
@@ -439,7 +422,6 @@ class IngestionService(ServiceProcess):
         yield self._notify_ingest(ingest_res)
 
         self.dataset=None
-        self.data_source = None
 
         # now reply ok to the original message
         yield self.reply_ok(msg)
@@ -654,20 +636,7 @@ class IngestionService(ServiceProcess):
         else:
 
             #@TODO ask dave for help here - how can I chain these callbacks?
-
-            if self.data_source.aggregation_rule == self.data_source.AggregationRule.OVERLAP:
-
-                result = yield self._merge_overlapping_supplement()
-
-            elif self.data_source.aggregation_rule == self.data_source.AggregationRule.OVERWRITE:
-
-                result = yield self._merge_overwrite_supplement()
-
-
-            elif self.data_source.aggregation_rule == self.data_source.AggregationRule.FMRC:
-
-                result = yield self._merge_fmrc_supplement()
-
+            result = yield self._merge_supplement()
 
 
         # this is NOT rpc
@@ -679,33 +648,11 @@ class IngestionService(ServiceProcess):
 
         log.info('_ingest_op_recv_done - Complete')
 
-
-
-
     @defer.inlineCallbacks
-    def _merge_overwrite_supplement(self):
+    def _merge_supplement(self):
 
 
-        log.debug('_merge_overwrite_supplement - Start')
-
-        raise NotImplementedError('OVERWRITE Supplement updates are not yet supported')
-
-
-    @defer.inlineCallbacks
-    def _merge_fmrc_supplement(self):
-
-
-        log.debug('_merge_fmrc_supplement - Start')
-
-        raise NotImplementedError('FMRC Supplement updates are not yet supported')
-
-
-
-    @defer.inlineCallbacks
-    def _merge_overlapping_supplement(self):
-
-
-        log.debug('_merge_overlapping_supplement - Start')
+        log.debug('_merge_supplement - Start')
 
         # A little sanity check on entering recv_done...
         if len(self.dataset.Repository.branches) != 2:
@@ -1037,7 +984,7 @@ class IngestionService(ServiceProcess):
                 log.exception('Attribute merger failed for global attribute "%s".  Cause: %s' % (att_name, str(ex)))
 
 
-        log.debug('_merge_overlapping_supplement - Complete')
+        log.debug('_merge_supplement - Complete')
 
         defer.returnValue(result)
 
