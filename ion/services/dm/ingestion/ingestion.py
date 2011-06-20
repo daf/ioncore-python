@@ -362,12 +362,13 @@ class IngestionService(ServiceProcess):
             ingest_res = yield self._defer_ingest    # wait for other commands to finish the actual ingestion
         except Exception, ex:
 
+            log.error("Error occured while waiting for ingestion to complete: %s" % str(ex.message))
+            log.exception(str(ex))
+
             # we have to notify that there is a failure, so get details and setup the dict to pass to notify_ingest.
             data_details = self.get_data_details(content)
             ingest_res={EM_ERROR:'Ingestion Failed: %s' % str(ex.message)}
             ingest_res.update(data_details)
-
-            log.error("Error occured while waiting for ingestion to complete: %s" % str(ex.message))
 
             yield self._notify_ingest(ingest_res)
 
@@ -685,7 +686,7 @@ class IngestionService(ServiceProcess):
     def _merge_overwrite_supplement(self):
 
 
-        log.debug('_merge_overlapping_supplement - Start')
+        log.debug('_merge_overwrite_supplement - Start')
 
         raise NotImplementedError('OVERWRITE Supplement updates are not yet supported')
 
@@ -694,7 +695,7 @@ class IngestionService(ServiceProcess):
     def _merge_fmrc_supplement(self):
 
 
-        log.debug('_merge_overlapping_supplement - Start')
+        log.debug('_merge_fmrc_supplement - Start')
 
         raise NotImplementedError('FMRC Supplement updates are not yet supported')
 
