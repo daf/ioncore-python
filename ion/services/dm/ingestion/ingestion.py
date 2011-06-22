@@ -713,16 +713,27 @@ class IngestionService(ServiceProcess):
         # A little sanity check on entering recv_done...
         if len(self.dataset.Repository.branches) != 2:
             raise IngestionError('The dataset is in a bad state - there should be two branches in the repository state on entering recv_done.', 500)
+        try:
 
 
-        # Commit the current state of the supplement - ingest of new content is complete
-        self.dataset.Repository.commit('Ingest received complete notification.')
+            # Commit the current state of the supplement - ingest of new content is complete
+            self.dataset.Repository.commit('Ingest received complete notification.')
 
-        # The current branch on entering recv done is the supplement branch
-        merge_branch = self.dataset.Repository.current_branch_key()
+            # Add proper exclusion types
+            #self.dataset.Repository.excluded_types.append(CDM_BOUNDED_ARRAY_TYPE)
 
-        # Merge it with the current state of the dataset in the datastore
-        yield self.dataset.MergeWith(branchname=merge_branch, parent_branch='master')
+            # The current branch on entering recv done is the supplement branch
+            merge_branch = self.dataset.Repository.current_branch_key()
+
+            # Merge it with the current state of the dataset in the datastore
+            yield self.dataset.MergeWith(branchname=merge_branch, parent_branch='master')
+        except Exception, ex:
+            log.exception(ex)
+            log.error("we dyde")
+
+            repo=self.dataset.Repository
+            log.error(str(repo))
+            raise ex
 
         #Remove the head for the supplement - there is only one current state once the merge is complete!
         self.dataset.Repository.remove_branch(merge_branch)

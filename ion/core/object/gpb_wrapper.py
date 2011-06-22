@@ -981,11 +981,13 @@ class Wrapper(object):
         local_cnt = self.recurse_count.count
         log.debug('Entering Recurse Commit: recurse counter - %d, Object Type - %s, child links - %d, objects to commit - %d' %
               (local_cnt, type(self), len(self.ChildLinks), len(structure)))
+        if hasattr(self, 'name'):
+            log.debug('HI I AM A %s' % self.name)
 
         if not  self.Modified:
             # This object is already committed!
-            log.debug('Exiting Recurse Commit: recurse counter - %d' % local_cnt)
-
+            log.debug('Exiting Recurse Commit (not modified): recurse counter - %d' % local_cnt)
+            self.recurse_count.count -= 1
             return
 
         # Create the Structure Element in which the binary blob will be stored
@@ -1104,7 +1106,7 @@ class Wrapper(object):
                 link.key = se.key
 
         log.debug('Exiting Recurse Commit: recurse counter - %d' % local_cnt)
-
+        self.recurse_count.count -= 1
 
     @GPBSource
     def FindChildLinks(self):
