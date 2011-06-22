@@ -140,6 +140,8 @@ class IngestionService(ServiceProcess):
         self.dataset = None
         self.data_source = None
 
+        self._test_these = []
+
         log.info('IngestionService.__init__()')
 
     @defer.inlineCallbacks
@@ -403,7 +405,7 @@ class IngestionService(ServiceProcess):
         resources = []
 
         if ingest_res.has_key(EM_ERROR):
-            log.info("Ingest Failed!")
+            log.info("Ingest Failed! %s" % str(ingest_res))
 
             # Don't change life cycle state - yet...
             #data_source.ResourceLifeCycleState = data_source.INACTIVE
@@ -437,9 +439,11 @@ class IngestionService(ServiceProcess):
         for res in resources:
             log.info('Resource %s life cycle state is %s' % (res.ResourceName, res.ResourceLifeCycleState))
 
+        log.info("Put resource transaction")
         yield self.rc.put_resource_transaction(resources)
-
+        log.info("end Put resource transaction")
         yield self._notify_ingest(ingest_res)
+        log.info("been had notifications")
 
         self.dataset=None
         self.data_source = None
@@ -603,9 +607,27 @@ class IngestionService(ServiceProcess):
             log.error(str(oe))
             raise IngestionError('Expected variable name %s not found in the dataset' % (content.variable_name))
 
+#        for x in ba.ChildLinks:
+#            log.debug("ba origi child linker: %s" % str(x))
+#
+#        log.debug("BOUT TO COPY THE BISINESS HERE %s" % content.variable_name)
         ba_link = var.content.bounded_arrays.add()
         my_ba = ba_link.Repository.copy_object(ba, deep_copy=False)
         ba_link.SetLink(my_ba)
+
+#        #log.debug("the balink is %s" % dir(ba_link))
+#        log.debug("the my_ba is now %s" % str(my_ba))
+#        for x in my_ba.ChildLinks:
+#            log.debug("child linker: %s" % str(x))
+#
+#            #retter = content.Repository.index_hash.get(x.key, None)
+#
+#            # see if we got this duder in the index hash?
+#            #retter = self.dataset.Repository.index_hash.get(x.key, None)
+#            #log.debug("WE GOT THIS GUY I THINBK %s" % str(retter is not None))
+#
+#            #if retter:
+#            #    self._test_these.append(x.key)
 
         yield msg.ack()
 
@@ -710,19 +732,40 @@ class IngestionService(ServiceProcess):
 
         log.debug('_merge_overlapping_supplement - Start')
 
+        # pull and checker
+
+
+        #log.debug("WE GOT THIS GUY I THINBK %s" % str(retter))
+
+        import base64
+        for k in self._test_these:
+            retter = self.dataset.Repository.index_hash.get(k, None)
+            log.debug("did we fall away? %s %s" % (base64.encodestring(k)[0:6], str(retter is not None)))
+        
+
         # A little sanity check on entering recv_done...
         if len(self.dataset.Repository.branches) != 2:
             raise IngestionError('The dataset is in a bad state - there should be two branches in the repository state on entering recv_done.', 500)
 
-
         # Commit the current state of the supplement - ingest of new content is complete
         self.dataset.Repository.commit('Ingest received complete notification.')
 
+        # Add proper exclusion types
+        #self.dataset.Repository.excluded_types.append(CDM_BOUNDED_ARRAY_TYPE)
+
         # The current branch on entering recv done is the supplement branch
         merge_branch = self.dataset.Repository.current_branch_key()
+        log.debug("HI I AM ABOUT TO DYDE")
+        try:
+            # Merge it with the current state of the dataset in the datastore
+            yield self.dataset.MergeWith(branchname=merge_branch, parent_branch='master')
+        except Exception, ex:
+            log.exception(ex)
+            log.error("we dyde")
 
-        # Merge it with the current state of the dataset in the datastore
-        yield self.dataset.MergeWith(branchname=merge_branch, parent_branch='master')
+            repo=self.dataset.Repository
+            log.error(str(repo))
+            raise ex
 
         #Remove the head for the supplement - there is only one current state once the merge is complete!
         self.dataset.Repository.remove_branch(merge_branch)
