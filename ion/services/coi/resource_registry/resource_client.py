@@ -805,18 +805,10 @@ class ResourceInstance(object):
 
     @defer.inlineCallbacks
     def MergeWith(self, branchname, parent_branch=None):
-        try:
-            if parent_branch is not None:
-                yield self.Repository.checkout(branchname=parent_branch)
-        except KeyError, ex:
-            log.error("WE GOT HTE FUNK")
-            raise ex
+        if parent_branch is not None:
+            yield self.Repository.checkout(branchname=parent_branch)
 
-        try:
-            yield self.Repository.merge_with(branchname=branchname)
-        except KeyError, ex:
-            log.error("WE GOT HTE BADUNKADUNK")
-            raise ex
+        yield self.Repository.merge_with(branchname=branchname)
 
 
     @defer.inlineCallbacks

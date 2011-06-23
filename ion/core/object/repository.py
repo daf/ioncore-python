@@ -449,33 +449,23 @@ class ObjectContainer(object):
         # Set the excluded types used in checking out this repository
         self.excluded_types = excluded_types    # @TODO: update instead of replace?
 
-        log.error("I AM IN CHECKOUT COMMIT THANKS")
-
         if not hasattr(excluded_types, '__contains__' ):
             raise RepositoryError('Invalid argument excluded_types in checkout_commit: must be a list of object types')
 
-        log.error("GETTERING OBJECT ROOT LINK")
         link = commit.GetLink('objectroot')
         if link.type.GPBMessage in excluded_types:
             raise RepositoryError('Can not exclude the type of the root object!')
 
-
         root_obj = None
 
         try:
-            log.error("CHECKOUT LOCAL COMMIT?")
             root_obj = self._checkout_local_commit(commit, excluded_types)
-            log.error("DID WE KEYERROR??")
 
         except KeyError, ke:
 
-            log.error('Making none local checkout')
-
-        log.error("I AM HERE AND GOOD? %s" % (root_obj is None))
+            log.info('Making none local checkout')
 
         if root_obj is None:
-
-            log.error("CEHCKOUT REMOTE COMMIT WHICH RETURNS A SILLY DEFERRED")
 
             root_obj = self._checkout_remote_commit(commit, excluded_types)
 
@@ -1285,81 +1275,60 @@ class Repository(ObjectContainer):
         It simply adds the parent ref to the repositories merged from list!
         
         """
-        try:
-            if self.status == self.MODIFIED:
-                log.warn('Merging while the workspace is dirty better to make a new commit first!')
-                #What to do for uninitialized?
-
-            if self.status == self.NOTINITIALIZED:
-                raise RepositoryError('Can not merge in a repository which is not initialized (Checkout something first!)')
-
-            crefs=[]
-
-            if commit_id:
-                if commit_id == self._current_branch.commitrefs[0].MyId:
-                    raise RepositoryError('Can not merge into self!')
-                try:
-                    crefs.append(self._commit_index[commit_id])
-                except KeyError, ex:
-                    raise RepositoryError('Can not merge from unknown commit_id %s' % commit_id)
-
-            elif branchname:
-
-                branch = self.get_branch(branchname)
-                if not branch:
-                    raise RepositoryError('Branch Key: "%s" does not exist!' % branchname)
-
-                if branch.branchkey == self._current_branch.branchkey:
-                    if len(branch.commitrefs)<2:
-                        raise RepositoryError('Can not merge with current branch head (self into self)')
-
-                    # Merge the divergent states of this branch!
-                    crefs = branch.commitrefs
-                    crefs.pop(self._current_branch.commitrefs[0])
-
-                else:
-                    # Assume we merge any and all states of this branch?
-                    crefs.extend( branch.commitrefs)
-
+        
+        if self.status == self.MODIFIED:
+            log.warn('Merging while the workspace is dirty better to make a new commit first!')
+            #What to do for uninitialized?
+            
+        if self.status == self.NOTINITIALIZED:
+            raise RepositoryError('Can not merge in a repository which is not initialized (Checkout something first!)')
+        
+        crefs=[]
+                
+        if commit_id:
+            if commit_id == self._current_branch.commitrefs[0].MyId:
+                raise RepositoryError('Can not merge into self!')
+            try:
+                crefs.append(self._commit_index[commit_id])
+            except KeyError, ex:
+                raise RepositoryError('Can not merge from unknown commit_id %s' % commit_id)
+        
+        elif branchname:
+            
+            branch = self.get_branch(branchname)
+            if not branch:
+                raise RepositoryError('Branch Key: "%s" does not exist!' % branchname)
+            
+            if branch.branchkey == self._current_branch.branchkey:
+                if len(branch.commitrefs)<2:
+                    raise RepositoryError('Can not merge with current branch head (self into self)')
+                
+                # Merge the divergent states of this branch!
+                crefs = branch.commitrefs
+                crefs.pop(self._current_branch.commitrefs[0])
+                
             else:
-                log.debug('''Arguments to Repository.merge - branchname: %s; commit_id: %s''' \
-                          % (branchname, commit_id))
-                raise RepositoryError('merge takes either a branchname argument or a commit_id argument!')
-
-            assert len(crefs) > 0, 'Illegal state reached in repository Merge With function!'
-        except KeyError, ex:
-            log.exception(ex)
-            log.error("HI WE DYDE IN TEH MERGE WITH")
-            raise ex
-
+                # Assume we merge any and all states of this branch?
+                crefs.extend( branch.commitrefs)
+        
+        else:
+            log.debug('''Arguments to Repository.merge - branchname: %s; commit_id: %s''' \
+                      % (branchname, commit_id))
+            raise RepositoryError('merge takes either a branchname argument or a commit_id argument!')
+        
+        assert len(crefs) > 0, 'Illegal state reached in repository Merge With function!'
 
         for cref in crefs:
             # Create a merge container to hold the merge object state for access
-            try:
-                mr = MergeRepository(cref, self.index_hash.cache)
-            except KeyError, ex:
-                log.exception(ex)
-                log.error("<ERGE REPOISOTY DYDE")
-                raise ex
 
-            try:
-                yield mr.load_root(excluded_types = self.excluded_types)
-            except KeyError, ex:
-                log.exception(ex)
-                log.error("MISTER LOAD ROAOT DEADE")
-                raise ex
+            mr = MergeRepository(cref, self.index_hash.cache)
 
-            try:
-                if self.merge is None:
-                    self.merge = MergeContainer()
+            yield mr.load_root(excluded_types = self.excluded_types)
 
-                self.merge.append(mr)
-            except KeyError, ex:
-                log.exception(ex)
-                log.error("MERGE OR MERGE CONTIANER")
-                raise ex
+            if self.merge is None:
+                self.merge = MergeContainer()
 
-
+            self.merge.append(mr)
 
         
     @property
@@ -1689,10 +1658,10 @@ class MergeRepository(ObjectContainer):
     @defer.inlineCallbacks
     def load_root(self, excluded_types):
 
-        # may take a non-deferred path here
-        self._workspace_root = yield defer.maybeDeferred(self.checkout_commit, self.commit, excluded_types)
+        self._workspace_root = yield self.checkout_commit(self.commit, excluded_types)
 
         self._workspace_root.SetStructureReadOnly()
+
 
 class MergeContainer(object):
 

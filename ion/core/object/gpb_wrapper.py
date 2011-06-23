@@ -952,13 +952,8 @@ class Wrapper(object):
 
         self.ReadOnly = True
         for link in self.ChildLinks:
-            try:
-                child = self.Repository.get_linked_object(link)
-                child.SetStructureReadOnly()
-            except KeyError:
-                # we're just setting things read only, don't worry if we couldn't get part of it.
-                # this is intentionally happening in ingestion
-                pass
+            child = self.Repository.get_linked_object(link)
+            child.SetStructureReadOnly()
 
     @GPBSource
     def SetStructureReadWrite(self):
@@ -984,15 +979,13 @@ class Wrapper(object):
 
         self.recurse_count.count += 1
         local_cnt = self.recurse_count.count
-        log.debug('Entering Recurse Commit: recurse counter - %d, Object Type - %s, child links - %d, objects to commit - %d, modified: %s:\n %s' %
-              (local_cnt, type(self), len(self.ChildLinks), len(structure), self.Modified, str(self)))
-        if hasattr(self, 'name') and self.name:
-            log.debug('HI I AM A %s' % self.name)
+        log.debug('Entering Recurse Commit: recurse counter - %d, Object Type - %s, child links - %d, objects to commit - %d' %
+              (local_cnt, type(self), len(self.ChildLinks), len(structure)))
 
         if not  self.Modified:
             # This object is already committed!
-            log.debug('Exiting Recurse Commit (not modified): recurse counter - %d' % local_cnt)
-            self.recurse_count.count -= 1
+            log.debug('Exiting Recurse Commit: recurse counter - %d' % local_cnt)
+
             return
 
         # Create the Structure Element in which the binary blob will be stored
@@ -1010,34 +1003,25 @@ class Wrapper(object):
             child_se = repo.index_hash.get(link.key, structure.get(link.key, None))
             #child_se = repo.index_hash.get(link.key, None)
 
-            #log.warn('Setting child Link: %s' % str(child_se))
+            #print 'Setting child Link:', child_se
             if  child_se is not None:
                 # Set the links is leaf property
                 link.isleaf = child_se.isleaf
 
             else:
-                #log.warn('SE for child not found - determining number of child links')
-                # if isleaf set, type set, and the key is an actual SHA1 - we don't need to recurse into it or do anything, really.
-                if link.IsFieldSet('isleaf') and link.IsFieldSet('type') and len(link.key) == 20:
-                    log.warn('Disregarding un-index-hashd link %s' % link.key)
-                    pass
+                #print 'SE for child not found - determining number of child links'
+
+                child = repo.get_linked_object(link)
+
+                # Determine whether this is a leaf node
+                if len(child.ChildLinks) == 0:
+                    link.isleaf = True
                 else:
-                    try:
-                        child = repo.get_linked_object(link)
-                    except KeyError, ex:
-                        log.error("CAUGHT A PROBLEMO")
-                        log.error('Entering Recurse Commit: recurse counter - %d, Object Type - %s, child links - %d, objects to commit - %d, modified: %s:\n %s' %
-                            (local_cnt, type(self), len(self.ChildLinks), len(structure), self.Modified, str(self)))
-                        raise ex
+                    link.isleaf = False
 
-                    # Determine whether this is a leaf node
-                    if len(child.ChildLinks) == 0:
-                        link.isleaf = True
-                    else:
-                        link.isleaf = False
 
-                    #log.warn('Calling Recurse Commit on child')
-                    child.RecurseCommit(structure)
+                #print 'Calling Recurse Commit on child'
+                child.RecurseCommit(structure)
 
             # Save the link info as a convience for sending!
             se.ChildLinks.add(link.key)
@@ -1120,7 +1104,7 @@ class Wrapper(object):
                 link.key = se.key
 
         log.debug('Exiting Recurse Commit: recurse counter - %d' % local_cnt)
-        self.recurse_count.count -= 1
+
 
     @GPBSource
     def FindChildLinks(self):

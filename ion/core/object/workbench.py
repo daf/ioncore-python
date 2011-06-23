@@ -774,7 +774,7 @@ class WorkBench(object):
             repostate.blob_keys.extend(self.list_repository_blobs(repo))
 
         try:
-            result, headers, msg = yield self._process.rpc_send(targetname,'push', pushmsg, timeout=120)
+            result, headers, msg = yield self._process.rpc_send(targetname,'push', pushmsg)
 
             # @TODO Return more info about the result - detect divergence?
         except ReceivedError, re:
@@ -898,7 +898,7 @@ class WorkBench(object):
         Similar to the client pattern but must specify address!
 
         """
-        objs, headers, msg = yield self._process.rpc_send(address,'fetch_blobs', request, timeout=120)
+        objs, headers, msg = yield self._process.rpc_send(address,'fetch_blobs', request)
 
         defer.returnValue(objs)
 
