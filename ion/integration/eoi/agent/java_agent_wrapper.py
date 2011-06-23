@@ -26,7 +26,7 @@ from twisted.internet import defer, reactor
 
 # Imports: ION Core
 from ion.core import ioninit
-from ion.core.exception import IonError, ApplicationError, ReceivedContainerError, ReceivedApplicationError
+from ion.core.exception import IonError, ApplicationError, ReceivedError
 from ion.core.object import object_utils
 from ion.core.object.gpb_wrapper import OOIObjectError
 from ion.core.process.process import Process, ProcessFactory
@@ -480,21 +480,21 @@ class JavaAgentWrapper(ServiceProcess):
 
         try:
             (ingest_result, ingest_headers, ingest_msg) = yield perform_ingest_deferred
-        except ReceivedContainerError, ex:
+        except ReceivedError, ex:
             log.error("Ingestion raised an error: %s" % str(ex.msg_content.MessageResponseBody))
+
+            # tell dataset agent to stop doing its thing
+            nonemsg = yield self.mc.create_instance(None)
+            yield self.send(self.agent_binding, 'op_ingest_error', nonemsg)
+
             defer.returnValue(False)
-        except ReceivedApplicationError, ex:
-            log.error("Ingestion raised an error: %s" % str(ex.msg_content.MessageResponseBody))
-            defer.returnValue(False)
+
         finally:
             # cleanup timeout-increasing subscriber
             self._registered_life_cycle_objects.remove(self._subscriber)
             yield self._subscriber.terminate()
             self._subscriber = None
 
-            # tell dataset agent to stop doing its thing
-            nonemsg = yield self.mc.create_instance(None)
-            yield self.send(self.agent_binding, 'op_ingest_error', nonemsg)
 
         log.debug('Ingestion is complete on the ingestion services side...')
 
