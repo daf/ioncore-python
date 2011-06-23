@@ -379,7 +379,7 @@ class IngestionService(ServiceProcess):
 
             log.error("Error occured while waiting for ingestion to complete: %s" % str(ex.message))
 
-            yield self._notify_ingest(ingest_res)
+            #yield self._notify_ingest(ingest_res)
 
             # reraise - in the case of ApplicationError, will simply reply to the original sender
             # do NOT reraise in the case of a timeout on our side - JAW will timeout client-side
