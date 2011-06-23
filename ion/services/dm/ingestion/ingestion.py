@@ -315,6 +315,9 @@ class IngestionService(ServiceProcess):
 
         except Exception, ex:
 
+            log.exception(ex)
+            log.error("Caught an exception from routed sub-ingestion message")
+
             # remove ourself, deactivate, so we don't get any more messages
             self._registered_life_cycle_objects.remove(self._subscriber)
             yield self._subscriber.terminate()
