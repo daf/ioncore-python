@@ -296,6 +296,10 @@ class IngestionService(ServiceProcess):
         triggers one, it will error out of the op_ingest call appropriately.
         """
 
+        if self._subscriber is None:
+            log.error("THIS OCCURS ONLY WHEN THERES A BUNCH QUEUED UP AND WE CANT QUIT FAST ENOUGH")
+            defer.returnValue(False)
+
         try:
             opname = payload.get('op', '')
             content = payload.get('content', '')    # should be None, but this is how Process' receive does it
@@ -310,6 +314,11 @@ class IngestionService(ServiceProcess):
                 raise IngestionError('Unknown operation specified')
 
         except Exception, ex:
+
+            # remove ourself, deactivate, so we don't get any more messages
+            self._registered_life_cycle_objects.remove(self._subscriber)
+            yield self._subscriber.terminate()
+            self._subscriber = None
 
             # ack the message to make the receiver stack happy
             yield msg.ack()
@@ -388,10 +397,10 @@ class IngestionService(ServiceProcess):
             # reset ingestion deferred so we can use it again
             self._defer_ingest = defer.Deferred()
 
-            # remove subscriber, deactivate it
-            self._registered_life_cycle_objects.remove(self._subscriber)
-            yield self._subscriber.terminate()
-            self._subscriber = None
+        # remove subscriber, deactivate it
+        self._registered_life_cycle_objects.remove(self._subscriber)
+        yield self._subscriber.terminate()
+        self._subscriber = None
 
         data_details = self.get_data_details(content)
 
