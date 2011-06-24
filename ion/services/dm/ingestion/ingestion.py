@@ -409,8 +409,10 @@ class IngestionService(ServiceProcess):
             yield self._subscriber.terminate()
             self._subscriber = None
 
+            log.info('killed subscriber, now about to flag off')
             # reset ingestion terminating after shutting down subscriber
             self._ingestion_terminating = False
+            log.info('flag off')
 
         data_details = self.get_data_details(content)
 
@@ -531,6 +533,18 @@ class IngestionService(ServiceProcess):
 
         log.info('_ingest_op_recv_dataset - Start')
 
+        if self._ingestion_terminating:
+            log.error("_ingest_op_recv_dataset CAUGHT A TEMRINATINGIN")
+            yield msg.ack()
+            defer.returnValue(None)
+
+        log.error('timouetcb cancelled %s called %s' % (self.timeoutcb.cancelled, self.timeoutcb.called))
+
+        if not self.timeoutcb.active():
+            log.error("TIMEOUTCB NO LONGER ACTIVE STEEZ MUST BE DEAD")
+            yield msg.ack()
+            defer.returnValue(None)
+
         log.info('Adding 30 seconds to timeout')
         self.timeoutcb.delay(30)
 
@@ -578,6 +592,18 @@ class IngestionService(ServiceProcess):
     def _ingest_op_recv_chunk(self, content, headers, msg):
 
         log.info('_ingest_op_recv_chunk - Start')
+
+        if self._ingestion_terminating:
+            log.error("_ingest_op_recv_chunk CAUGHT A TEMRINATINGIN")
+            yield msg.ack()
+            defer.returnValue(None)
+
+        log.error('timouetcb cancelled %s called %s' % (self.timeoutcb.cancelled, self.timeoutcb.called))
+
+        if not self.timeoutcb.active():
+            log.error("TIMEOUTCB NO LONGER ACTIVE STEEZ MUST BE DEAD")
+            yield msg.ack()
+            defer.returnValue(None)
 
         log.info('Adding 30 seconds to timeout')
         self.timeoutcb.delay(30)
@@ -643,6 +669,18 @@ class IngestionService(ServiceProcess):
         """
 
         log.info('_ingest_op_recv_done - Start')
+
+        if self._ingestion_terminating:
+            log.error("_ingest_op_recv_done CAUGHT A TEMRINATINGIN")
+            yield msg.ack()
+            defer.returnValue(None)
+
+        log.error('timouetcb cancelled %s called %s' % (self.timeoutcb.cancelled, self.timeoutcb.called))
+
+        if not self.timeoutcb.active():
+            log.error("TIMEOUTCB NO LONGER ACTIVE STEEZ MUST BE DEAD")
+            yield msg.ack()
+            defer.returnValue(None)
 
         log.info('Cancelling timeout!')
         self.timeoutcb.cancel()
