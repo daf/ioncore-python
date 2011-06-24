@@ -140,6 +140,8 @@ class IngestionService(ServiceProcess):
         self.dataset = None
         self.data_source = None
 
+        self._ingestion_terminating = False
+
         log.info('IngestionService.__init__()')
 
     @defer.inlineCallbacks
@@ -296,7 +298,7 @@ class IngestionService(ServiceProcess):
         triggers one, it will error out of the op_ingest call appropriately.
         """
 
-        if self._subscriber is None:
+        if self._ingestion_terminating:
             log.error("THIS OCCURS ONLY WHEN THERES A BUNCH QUEUED UP AND WE CANT QUIT FAST ENOUGH")
             defer.returnValue(False)
 
@@ -315,16 +317,7 @@ class IngestionService(ServiceProcess):
 
         except Exception, ex:
 
-            log.exception(ex)
-            log.error("Caught an exception from routed sub-ingestion message")
-
-            # remove ourself, deactivate, so we don't get any more messages
-            self._registered_life_cycle_objects.remove(self._subscriber)
-            yield self._subscriber.terminate()
-            self._subscriber = None
-
-            # ack the message to make the receiver stack happy
-            yield msg.ack()
+            self._ingestion_terminating = True
 
             # all error handling goes back to op_ingest
             self._defer_ingest.errback(ex)
@@ -379,7 +372,7 @@ class IngestionService(ServiceProcess):
 
             log.error("Error occured while waiting for ingestion to complete: %s" % str(ex.message))
 
-            #yield self._notify_ingest(ingest_res)
+            yield self._notify_ingest(ingest_res)
 
             # reraise - in the case of ApplicationError, will simply reply to the original sender
             # do NOT reraise in the case of a timeout on our side - JAW will timeout client-side
@@ -400,10 +393,13 @@ class IngestionService(ServiceProcess):
             # reset ingestion deferred so we can use it again
             self._defer_ingest = defer.Deferred()
 
-        # remove subscriber, deactivate it
-        self._registered_life_cycle_objects.remove(self._subscriber)
-        yield self._subscriber.terminate()
-        self._subscriber = None
+            # remove subscriber, deactivate it
+            self._registered_life_cycle_objects.remove(self._subscriber)
+            yield self._subscriber.terminate()
+            self._subscriber = None
+
+            # reset ingestion terminating after shutting down subscriber
+            self._ingestion_terminating = False
 
         data_details = self.get_data_details(content)
 
