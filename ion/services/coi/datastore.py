@@ -983,17 +983,21 @@ class DataStoreWorkbench(WorkBench):
             #   an array as being a required to copy array along with the ranges in both target and source.
             for reqbounds, babounds in zip(request.request_bounds, ba.bounds):
 
-                #log.debug("Cur bounds: %d+%d, Req bounds: %d+%d" % (babounds.origin, babounds.size, reqbounds.origin, reqbounds.size))
+                log.debug("Cur bounds: %d+%d, Req bounds: %d+%d" % (babounds.origin, babounds.size, reqbounds.origin, reqbounds.size))
 
                 # this bounds is below our target range
                 # requested end is lower than this bounds start (exclusive)
                 if reqbounds.origin + reqbounds.size <= babounds.origin:
+                    log.debug("REJECT ONE")
                     break
 
                 # this bounds is above our target range
                 # requested start is higher than this bounds end (exclusive)
                 if reqbounds.origin >= babounds.origin + babounds.size:
+                    log.debug("REJECT TWO")
                     break
+
+                log.debug("ACCEPTER")
 
                 # compute intersections and offsets into request and src bounded arrays
                 isec_start = max(babounds.origin, reqbounds.origin)
