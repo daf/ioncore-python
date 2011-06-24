@@ -299,7 +299,11 @@ class IngestionService(ServiceProcess):
         """
 
         if self._ingestion_terminating:
-            log.error("THIS OCCURS ONLY WHEN THERES A BUNCH QUEUED UP AND WE CANT QUIT FAST ENOUGH")
+            log.debug("THIS OCCURS ONLY WHEN THERES A BUNCH QUEUED UP AND WE CANT QUIT FAST ENOUGH")
+
+            # throw this message away
+            yield msg.ack()
+
             defer.returnValue(False)
 
         try:
