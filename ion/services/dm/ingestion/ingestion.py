@@ -302,7 +302,11 @@ class IngestionService(ServiceProcess):
             log.debug("THIS OCCURS ONLY WHEN THERES A BUNCH QUEUED UP AND WE CANT QUIT FAST ENOUGH")
 
             # throw this message away
-            yield msg.ack()
+            try:
+                yield msg.ack()
+            except Exception, ex:
+                log.error("Y U NO WORK?")
+                log.exception(ex)
 
             defer.returnValue(False)
 
