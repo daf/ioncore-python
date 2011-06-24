@@ -1053,6 +1053,8 @@ class DataStoreWorkbench(WorkBench):
         for batuple in bounded_includes_list:
             ba, targetranges, srcranges = batuple
 
+            log.debug('ba %s, targetranges %s, srcranges %s' % (ba, targetranges, srcranges))
+
             # is this a scalar? is there anything to slice?
             if len(targetshape) == 0:
                 striplist.append((ba, (0, 1), (0, 1), 1, 1))
