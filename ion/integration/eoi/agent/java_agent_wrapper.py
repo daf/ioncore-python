@@ -130,6 +130,7 @@ class JavaAgentWrapper(ServiceProcess):
         self.__binding_key_deferred = None
         self.__ingest_client = None
         self.__ingest_ready_deferred = None
+        self._jaw_update_terminating = False
         
         self.queue_name = self.spawn_args.get('queue_name', CONF.getValue('queue_name', default='java_agent_wrapper_updates'))
 
@@ -457,7 +458,7 @@ class JavaAgentWrapper(ServiceProcess):
             """
             Inner method used to reset the ingestion timeout everytime we receive data
             """
-            if hasattr(perform_ingest_deferred, 'rpc_call'):
+            if hasattr(perform_ingest_deferred, 'rpc_call') and not self._jaw_update_terminating:
                 log.debug("Data message intercepted, increasing timeout by %d" % ingest_timeout)
                 perform_ingest_deferred.rpc_call.delay(ingest_timeout)
 
@@ -483,6 +484,9 @@ class JavaAgentWrapper(ServiceProcess):
         except ReceivedError, ex:
             log.error("Ingestion raised an error: %s" % str(ex.msg_content.MessageResponseBody))
 
+            # set flag here to ward off bunched up messages
+            self._jaw_update_terminating = True
+
             # tell dataset agent to stop doing its thing
             nonemsg = yield self.mc.create_instance(None)
             yield self.send(self.agent_binding, 'op_ingest_error', nonemsg)
@@ -494,6 +498,9 @@ class JavaAgentWrapper(ServiceProcess):
             self._registered_life_cycle_objects.remove(self._subscriber)
             yield self._subscriber.terminate()
             self._subscriber = None
+
+            # reset jaw terminating flag after subscriber is down
+            self._jaw_update_terminating = False
 
 
         log.debug('Ingestion is complete on the ingestion services side...')

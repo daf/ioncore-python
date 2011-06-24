@@ -319,6 +319,9 @@ class IngestionService(ServiceProcess):
 
             self._ingestion_terminating = True
 
+            # ack the message
+            yield msg.ack()
+
             # all error handling goes back to op_ingest
             self._defer_ingest.errback(ex)
 
