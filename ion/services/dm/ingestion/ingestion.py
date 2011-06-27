@@ -310,15 +310,20 @@ class IngestionService(ServiceProcess):
 
             defer.returnValue(False)
 
+        log.debug("GONNA ROUTE!")
+
         try:
             opname = payload.get('op', '')
             content = payload.get('content', '')    # should be None, but this is how Process' receive does it
 
             if opname == 'recv_dataset':
+                #log.debug("_handle_ingestion_msg: _ingest_op_recv_dataset")
                 yield self._ingest_op_recv_dataset(content, payload, msg)
             elif opname == 'recv_chunk':
+                #log.debug("_handle_ingestion_msg: _ingest_op_recv_chunk")
                 yield self._ingest_op_recv_chunk(content, payload, msg)
             elif opname == 'recv_done':
+                #log.debug("_handle_ingestion_msg: _ingest_op_recv_done")
                 yield self._ingest_op_recv_done(content, payload, msg)
             else:
                 raise IngestionError('Unknown operation specified')
@@ -328,6 +333,9 @@ class IngestionService(ServiceProcess):
             self._ingestion_terminating = True
 
             # ack the message
+            #log.debug("acking the excepted message? is this legit?")
+            #log.debug(dir(msg))
+            #log.debug(msg.__class__)
             yield msg.ack()
 
             # all error handling goes back to op_ingest
@@ -618,9 +626,8 @@ class IngestionService(ServiceProcess):
         if self.dataset.ResourceLifeCycleState is not self.dataset.UPDATE:
             raise IngestionError('Calling recv_chunk in an invalid state. Dataset is not on an update branch!')
 
-        # OOIION-191: sanity check field dataset_id disabled as DatasetAgent does not have the information when making these messages.
-        #if content.dataset_id != self.dataset.ResourceIdentity:
-        #    raise IngestionError('Calling recv_chunk with a dataset that does not match the received chunk!.')
+        if content.dataset_id != self.dataset.ResourceIdentity:
+            raise IngestionError('Calling recv_chunk with a dataset that does not match the received chunk!.')
 
 
         # Get the group out of the datset

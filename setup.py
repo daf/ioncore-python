@@ -57,6 +57,7 @@ setup( name = 'ioncore',
            'pysnmp==4.1.16a',
            'pyserial==2.5',
            'ionproto>=0.3.28',
+           'ionproto>=0.3.27',
                           ],
        entry_points = {
                         'console_scripts': [
