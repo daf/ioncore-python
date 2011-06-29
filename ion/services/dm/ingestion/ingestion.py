@@ -302,12 +302,9 @@ class IngestionService(ServiceProcess):
             log.debug("THIS OCCURS ONLY WHEN THERES A BUNCH QUEUED UP AND WE CANT QUIT FAST ENOUGH")
 
             # throw this message away
-            try:
-                yield msg.ack()
-            except Exception, ex:
-                log.error("Y U NO WORK?")
-                log.exception(ex)
-
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(False)
 
         log.debug("GONNA ROUTE!")
@@ -317,13 +314,13 @@ class IngestionService(ServiceProcess):
             content = payload.get('content', '')    # should be None, but this is how Process' receive does it
 
             if opname == 'recv_dataset':
-                #log.debug("_handle_ingestion_msg: _ingest_op_recv_dataset")
+                log.debug("_handle_ingestion_msg: _ingest_op_recv_dataset")
                 yield self._ingest_op_recv_dataset(content, payload, msg)
             elif opname == 'recv_chunk':
-                #log.debug("_handle_ingestion_msg: _ingest_op_recv_chunk")
+                log.debug("_handle_ingestion_msg: _ingest_op_recv_chunk")
                 yield self._ingest_op_recv_chunk(content, payload, msg)
             elif opname == 'recv_done':
-                #log.debug("_handle_ingestion_msg: _ingest_op_recv_done")
+                log.debug("_handle_ingestion_msg: _ingest_op_recv_done")
                 yield self._ingest_op_recv_done(content, payload, msg)
             else:
                 raise IngestionError('Unknown operation specified')
@@ -332,11 +329,13 @@ class IngestionService(ServiceProcess):
 
             self._ingestion_terminating = True
 
+            log.error("EXCEPTION HAPPENED: %s" % str(ex))
+
             # ack the message
             #log.debug("acking the excepted message? is this legit?")
             #log.debug(dir(msg))
             #log.debug(msg.__class__)
-            yield msg.ack()
+            yield msg.reject()
 
             # all error handling goes back to op_ingest
             self._defer_ingest.errback(ex)
@@ -543,14 +542,18 @@ class IngestionService(ServiceProcess):
 
         if self._ingestion_terminating:
             log.error("_ingest_op_recv_dataset CAUGHT A TEMRINATINGIN")
-            yield msg.ack()
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(None)
 
         log.error('timouetcb cancelled %s called %s' % (self.timeoutcb.cancelled, self.timeoutcb.called))
 
         if not self.timeoutcb.active():
             log.error("TIMEOUTCB NO LONGER ACTIVE STEEZ MUST BE DEAD")
-            yield msg.ack()
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(None)
 
         log.info('Adding 30 seconds to timeout')
@@ -603,14 +606,18 @@ class IngestionService(ServiceProcess):
 
         if self._ingestion_terminating:
             log.error("_ingest_op_recv_chunk CAUGHT A TEMRINATINGIN")
-            yield msg.ack()
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(None)
 
         log.error('timouetcb cancelled %s called %s' % (self.timeoutcb.cancelled, self.timeoutcb.called))
 
         if not self.timeoutcb.active():
             log.error("TIMEOUTCB NO LONGER ACTIVE STEEZ MUST BE DEAD")
-            yield msg.ack()
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(None)
 
         log.info('Adding 30 seconds to timeout')
@@ -679,14 +686,18 @@ class IngestionService(ServiceProcess):
 
         if self._ingestion_terminating:
             log.error("_ingest_op_recv_done CAUGHT A TEMRINATINGIN")
-            yield msg.ack()
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(None)
 
         log.error('timouetcb cancelled %s called %s' % (self.timeoutcb.cancelled, self.timeoutcb.called))
 
         if not self.timeoutcb.active():
             log.error("TIMEOUTCB NO LONGER ACTIVE STEEZ MUST BE DEAD")
-            yield msg.ack()
+            #yield msg.ack()
+            # DO NOT ACK
+            msg._state = "ANYTHINGBUTRECEIVED" # prevent auto-ack, doesn't matter if we requeue, we're not listening anymore
             defer.returnValue(None)
 
         log.info('Cancelling timeout!')
